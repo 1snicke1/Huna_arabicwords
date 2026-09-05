@@ -1,0 +1,343 @@
+/* ============================================================
+   Huna Arabic — flashcard app
+   Palette sampled directly from the academy's textbook covers
+   and huna-arabic.com (theme-color #2D6283):
+     --navy-deep   #020A1D  darkest gradient stop (cover bg)
+     --navy        #00264B  core background
+     --navy-light  #193D61  lighter gradient stop
+     --teal        #2D6283  brand primary (site theme-color)
+     --teal-bright #35A9BF  accent / header pill highlight
+     --teal-dark   #19637A  accent / header pill shadow
+     --orange      #FF7D1F  brand's secondary dialogue accent
+   ============================================================ */
+
+:root{
+  --navy-deep:#020a1d;
+  --navy:#00264b;
+  --navy-light:#193d61;
+  --teal:#2d6283;
+  --teal-bright:#35a9bf;
+  --teal-dark:#19637a;
+  --orange:#ff7d1f;
+  --paper:#f4f7f9;
+  --ink:#0d2135;
+
+  --font-ui:'Manrope',system-ui,sans-serif;
+  --font-ar:'Noto Naskh Arabic','Traditional Arabic',serif;
+
+  color-scheme: dark;
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+
+html,body{
+  height:100%;
+  margin:0;
+  background:
+    radial-gradient(ellipse at 50% -10%, rgba(53,169,191,.18), transparent 55%),
+    linear-gradient(180deg, var(--navy-deep) 0%, var(--navy) 45%, var(--navy-light) 100%);
+  background-attachment:fixed;
+  color:#fff;
+  font-family:var(--font-ui);
+  overflow-x:hidden;
+}
+
+#app{
+  min-height:100vh;
+  min-height:100dvh;
+  max-width:520px;
+  margin:0 auto;
+  padding:env(safe-area-inset-top) 20px calc(env(safe-area-inset-bottom) + 20px);
+  display:flex;
+  flex-direction:column;
+  position:relative;
+}
+
+.screen{ display:flex; flex-direction:column; flex:1; padding-top:22px; }
+.hidden{ display:none !important; }
+
+/* subtle background watermark pattern, echoing the geometric motif on the covers */
+body::before{
+  content:"";
+  position:fixed; inset:0;
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(255,255,255,.035) 0, transparent 40%),
+    radial-gradient(circle at 88% 92%, rgba(53,169,191,.06) 0, transparent 45%);
+  pointer-events:none;
+  z-index:0;
+}
+
+/* ---------- Header / brand ---------- */
+.brand-header{
+  display:flex; align-items:center; gap:12px;
+  margin-bottom:28px;
+}
+.brand-mark{
+  width:40px; height:40px;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--teal-bright);
+  border:1.4px solid rgba(255,255,255,.25);
+  border-radius:50%;
+  flex-shrink:0;
+}
+.brand-icon{ width:24px; height:24px; }
+.brand-name{ font-weight:800; font-size:15px; letter-spacing:.09em; }
+.brand-sub{ font-size:11.5px; color:rgba(255,255,255,.55); margin-top:1px; }
+
+/* ---------- Home hero ---------- */
+.hero-stat{
+  text-align:center;
+  margin:8px 0 22px;
+}
+.hero-number{
+  font-size:76px;
+  font-weight:800;
+  line-height:1;
+  background:linear-gradient(180deg,#ffffff, #cfe8ef);
+  -webkit-background-clip:text;
+  background-clip:text;
+  color:transparent;
+  letter-spacing:-.02em;
+}
+.hero-label{
+  margin-top:6px;
+  font-size:14.5px;
+  color:rgba(255,255,255,.6);
+}
+
+.stat-row{
+  display:flex;
+  gap:10px;
+  margin-bottom:26px;
+}
+.stat-chip{
+  flex:1;
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.09);
+  border-radius:16px;
+  padding:12px 8px;
+  text-align:center;
+}
+.stat-chip-num{ font-size:20px; font-weight:800; }
+.stat-chip-label{ font-size:10.5px; color:rgba(255,255,255,.5); margin-top:2px; }
+
+.vol-filter{
+  display:flex; gap:8px;
+  margin-bottom:22px;
+}
+.vol-chip{
+  flex:1;
+  padding:10px 6px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.14);
+  background:transparent;
+  color:rgba(255,255,255,.65);
+  font-family:var(--font-ui);
+  font-weight:700;
+  font-size:13px;
+  cursor:pointer;
+}
+.vol-chip.active{
+  background:linear-gradient(135deg, var(--teal-dark), var(--teal-bright));
+  border-color:transparent;
+  color:#fff;
+}
+
+.cta-button{
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  width:100%;
+  padding:17px 20px;
+  border:none;
+  border-radius:16px;
+  background:linear-gradient(135deg, var(--teal-dark), var(--teal-bright));
+  color:#fff;
+  font-family:var(--font-ui);
+  font-weight:700;
+  font-size:16px;
+  cursor:pointer;
+  box-shadow:0 10px 26px -8px rgba(53,169,191,.55);
+  margin-top:auto;
+}
+.cta-button:active{ transform:scale(.98); }
+
+.link-button{
+  background:none; border:none;
+  color:rgba(255,255,255,.55);
+  font-family:var(--font-ui);
+  font-size:13.5px;
+  font-weight:600;
+  padding:16px 0 4px;
+  cursor:pointer;
+  text-align:center;
+}
+.link-button.danger{ color:#ff8f6b; margin-top:auto; }
+
+/* ---------- Study screen ---------- */
+.study-topbar{
+  display:flex; align-items:center; gap:12px;
+  margin-bottom:26px;
+}
+.progress-track{
+  flex:1; height:6px;
+  background:rgba(255,255,255,.12);
+  border-radius:99px;
+  overflow:hidden;
+}
+.progress-fill{
+  height:100%; width:0%;
+  background:linear-gradient(90deg, var(--teal-dark), var(--teal-bright));
+  border-radius:99px;
+  transition:width .3s ease;
+}
+.study-count{
+  font-size:13px; font-weight:700; color:rgba(255,255,255,.55);
+  white-space:nowrap;
+}
+
+.card-area{
+  flex:1;
+  display:flex; align-items:center; justify-content:center;
+  min-height:280px;
+}
+
+.flashcard{
+  width:100%;
+  min-height:min(50vh, 400px);
+  border-radius:24px;
+  background:linear-gradient(160deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
+  border:1px solid rgba(255,255,255,.12);
+  padding:32px 24px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center;
+  cursor:pointer;
+  position:relative;
+}
+.card-face{ display:flex; flex-direction:column; align-items:center; width:100%; }
+.card-kicker{
+  position:absolute; top:18px; left:50%; transform:translateX(-50%);
+  font-size:11px; font-weight:700; letter-spacing:.08em;
+  padding:5px 14px; border-radius:99px;
+  background:linear-gradient(135deg, var(--teal-dark), var(--teal-bright));
+  color:#fff;
+}
+.card-arabic{
+  font-family:var(--font-ar);
+  font-size:44px;
+  line-height:1.5;
+  font-weight:600;
+  color:#fff;
+  margin-top:20px;
+}
+.card-arabic-small{ font-size:32px; color:rgba(255,255,255,.85); margin-top:0;}
+.tap-hint{
+  margin-top:22px;
+  font-size:12.5px;
+  color:rgba(255,255,255,.4);
+}
+.card-divider{
+  width:44px; height:2px;
+  background:var(--teal-bright);
+  border-radius:2px;
+  margin:20px 0;
+  opacity:.7;
+}
+.card-translation{
+  font-size:21px;
+  font-weight:700;
+  color:#fff;
+}
+
+.grade-row{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:8px;
+  margin-top:20px;
+}
+.grade-btn{
+  padding:14px 4px;
+  border-radius:14px;
+  border:none;
+  font-family:var(--font-ui);
+  font-weight:700;
+  font-size:12.5px;
+  color:#fff;
+  cursor:pointer;
+}
+.grade-btn:active{ transform:scale(.96); }
+.grade-again{ background:linear-gradient(135deg,#a83a1f,var(--orange)); }
+.grade-hard{ background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.16); }
+.grade-good{ background:linear-gradient(135deg, var(--teal-dark), var(--teal)); }
+.grade-easy{ background:linear-gradient(135deg, var(--teal), var(--teal-bright)); }
+
+/* ---------- Done screen ---------- */
+.done-wrap{
+  margin:auto 0;
+  display:flex; flex-direction:column; align-items:center; text-align:center;
+}
+.done-icon{ width:56px; height:56px; color:var(--teal-bright); margin-bottom:18px; }
+.done-title{ font-size:22px; font-weight:800; }
+.done-sub{ font-size:14px; color:rgba(255,255,255,.55); margin-top:6px; }
+.done-stats{
+  display:flex; gap:10px; margin:28px 0 8px; width:100%;
+}
+.done-stat{
+  flex:1; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09);
+  border-radius:16px; padding:14px 6px;
+}
+.done-stat-num{ font-size:22px; font-weight:800; }
+.done-stat-label{ font-size:10.5px; color:rgba(255,255,255,.5); margin-top:2px; }
+#btn-done-home{ margin-top:24px; }
+
+/* ---------- Stats screen ---------- */
+.stats-title{ font-size:22px; font-weight:800; margin-bottom:20px; }
+.stats-block{
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.09);
+  border-radius:16px;
+  padding:6px 16px;
+  margin-bottom:16px;
+}
+.stats-row{
+  display:flex; justify-content:space-between; align-items:center;
+  padding:13px 0;
+  font-size:14.5px;
+  border-bottom:1px solid rgba(255,255,255,.07);
+}
+.stats-row:last-child{ border-bottom:none; }
+.stats-row span:last-child{ font-weight:800; color:var(--teal-bright); }
+
+.settings-row{
+  display:flex; justify-content:space-between; align-items:center;
+  padding:14px 16px;
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.09);
+  border-radius:16px;
+  margin-bottom:10px;
+  font-size:14px;
+}
+.settings-row select{
+  background:rgba(255,255,255,.1);
+  color:#fff;
+  border:1px solid rgba(255,255,255,.15);
+  border-radius:8px;
+  padding:6px 8px;
+  font-family:var(--font-ui);
+  font-weight:700;
+}
+
+/* back button (top-left, shown on sub-screens without Telegram BackButton fallback) */
+.back-btn{
+  width:36px; height:36px;
+  margin-bottom:16px;
+  border-radius:50%;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.14);
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; cursor:pointer;
+  flex-shrink:0;
+}
+
+@media (max-width:360px){
+  .hero-number{ font-size:64px; }
+  .card-arabic{ font-size:36px; }
+}
