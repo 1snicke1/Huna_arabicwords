@@ -22,7 +22,7 @@
   --paper:#f4f7f9;
   --ink:#0d2135;
 
-  --font-ui:'Manrope',system-ui,sans-serif;
+  --font-ui:'Manrope','Noto Naskh Arabic',system-ui,sans-serif;
   --font-ar:'Noto Naskh Arabic','Traditional Arabic',serif;
 
   color-scheme: dark;
@@ -60,11 +60,10 @@ html,body{
 .home-watermark{
   position:absolute;
   z-index:-1;
-  right:-70px; bottom:-10px;
-  width:280px; height:auto;
-  opacity:.07;
+  right:0; bottom:0;
+  width:270px; height:auto;
+  opacity:.08;
   pointer-events:none;
-  transform:rotate(-4deg);
 }
 
 /* subtle background watermark pattern, echoing the geometric motif on the covers */
