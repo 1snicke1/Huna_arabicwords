@@ -143,6 +143,89 @@ body::before{
   color:#fff;
 }
 
+.section-select{
+  display:flex; align-items:center; justify-content:space-between;
+  width:100%;
+  padding:14px 16px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.05);
+  color:#fff;
+  cursor:pointer;
+  margin-bottom:22px;
+}
+.section-select-text{ text-align:left; }
+.section-select-label{ font-size:11px; color:rgba(255,255,255,.5); font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+.section-select-value{ font-size:15px; font-weight:700; margin-top:2px; }
+.section-select svg{ color:rgba(255,255,255,.4); flex-shrink:0; }
+
+/* ---------- Chapters / sections screen ---------- */
+.all-chapters-row{
+  display:flex; align-items:center; justify-content:space-between;
+  width:100%;
+  padding:15px 16px;
+  border-radius:14px;
+  border:1px solid rgba(53,169,191,.35);
+  background:rgba(53,169,191,.1);
+  color:#fff;
+  font-family:var(--font-ui);
+  font-weight:700;
+  font-size:14.5px;
+  cursor:pointer;
+  margin-bottom:18px;
+}
+.check-circle{
+  width:20px; height:20px;
+  border-radius:50%;
+  border:1.6px solid rgba(255,255,255,.35);
+  flex-shrink:0;
+  position:relative;
+}
+.check-circle.checked{
+  background:linear-gradient(135deg, var(--teal-dark), var(--teal-bright));
+  border-color:transparent;
+}
+.check-circle.checked::after{
+  content:"";
+  position:absolute; left:50%; top:47%;
+  width:5px; height:9px;
+  border-right:2px solid #fff; border-bottom:2px solid #fff;
+  transform:translate(-50%,-50%) rotate(45deg);
+}
+.check-square{ border-radius:6px; }
+
+.vol-group-label{
+  font-size:12px; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--teal-bright);
+  margin:18px 0 8px;
+}
+.vol-group-label:first-child{ margin-top:0; }
+
+.chapter-block{
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.09);
+  border-radius:14px;
+  margin-bottom:8px;
+  overflow:hidden;
+}
+.chapter-row{
+  display:flex; align-items:center; gap:12px;
+  padding:13px 14px;
+  cursor:pointer;
+}
+.chapter-row-text{ flex:1; min-width:0; }
+.chapter-row-title{ font-size:14px; font-weight:700; }
+.chapter-row-count{ font-size:11.5px; color:rgba(255,255,255,.45); margin-top:1px; }
+
+.dialogue-row{
+  display:flex; align-items:center; gap:12px;
+  padding:10px 14px 10px 42px;
+  cursor:pointer;
+  border-top:1px solid rgba(255,255,255,.06);
+}
+.dialogue-row-text{ flex:1; font-size:13px; color:rgba(255,255,255,.8); }
+.dialogue-row-count{ font-size:11px; color:rgba(255,255,255,.4); }
+
 .cta-button{
   display:flex; align-items:center; justify-content:center; gap:8px;
   width:100%;
