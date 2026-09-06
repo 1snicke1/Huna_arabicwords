@@ -50,11 +50,13 @@
       </div>
     </div>
 
-    <div class="vol-filter" id="vol-filter">
-      <button class="vol-chip active" data-vol="all">Оба тома</button>
-      <button class="vol-chip" data-vol="1">Том I</button>
-      <button class="vol-chip" data-vol="2">Том II</button>
-    </div>
+    <button class="section-select" id="btn-sections">
+      <div class="section-select-text">
+        <div class="section-select-label">Раздел</div>
+        <div class="section-select-value" id="section-summary">Все главы</div>
+      </div>
+      <svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
 
     <button class="cta-button" id="btn-start">
       <span>Начать повторение</span>
@@ -62,6 +64,19 @@
     </button>
 
     <button class="link-button" id="btn-stats">Подробная статистика</button>
+  </section>
+
+  <!-- ===== CHAPTERS / SECTIONS SCREEN ===== -->
+  <section id="screen-chapters" class="screen hidden">
+    <button class="back-btn back-btn-inpage hidden" data-back><svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <div class="stats-title">Разделы</div>
+
+    <button class="all-chapters-row" id="btn-all-chapters">
+      <span>Все главы и диалоги</span>
+      <span class="check-circle" id="check-all"></span>
+    </button>
+
+    <div id="chapters-list"></div>
   </section>
 
   <!-- ===== STUDY SCREEN ===== -->
