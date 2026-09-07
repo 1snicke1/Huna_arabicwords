@@ -630,6 +630,17 @@
     saveSettings();
   });
 
+  // ---------- Support link ----------
+  // Set this to your bot's @username (without the @) once you've deployed
+  // the relay in api/bot-webhook.js — see README.md for setup steps.
+  const SUPPORT_BOT_USERNAME = 'your_bot_username';
+
+  document.getElementById('btn-support').addEventListener('click', () => {
+    const url = `https://t.me/${SUPPORT_BOT_USERNAME}`;
+    if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
+    else window.open(url, '_blank');
+  });
+
   document.getElementById('btn-reset').addEventListener('click', async () => {
     const ok = window.confirm('Весь прогресс изучения будет удалён без возможности восстановления. Продолжить?');
     if (!ok) return;
