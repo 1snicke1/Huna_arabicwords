@@ -286,6 +286,18 @@ body::before{
   font-size:13px; font-weight:700; color:rgba(255,255,255,.55);
   white-space:nowrap;
 }
+.undo-btn{
+  width:30px; height:30px;
+  border-radius:50%;
+  border:1px solid rgba(255,255,255,.16);
+  background:rgba(255,255,255,.06);
+  color:rgba(255,255,255,.75);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer;
+  flex-shrink:0;
+  transition:opacity .15s ease;
+}
+.undo-btn:active{ transform:scale(.92); }
 
 .card-area{
   flex:1;

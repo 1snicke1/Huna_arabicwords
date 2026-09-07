@@ -189,11 +189,16 @@
   function saveSettings(){ return Storage.setItem('settings', JSON.stringify(settings)); }
 
   // ---------- SRS logic ----------
-  // Learning steps (minutes) a card must pass through after being new or after a lapse,
-  // before it graduates into the long-term interval schedule. This guarantees a forgotten
-  // word gets reinforced at least twice — once soon, once a few hours later — rather than
-  // graduating to a multi-day gap after a single lucky guess.
-  const LEARNING_STEPS_MIN = [10, 180]; // 10 minutes, then 3 hours
+  // Faithful to Anki's model: a card moves through short "learning" steps
+  // (minutes) before graduating into long-term day-based "review" scheduling.
+  //  - Again  -> back to the very first (shortest) step, most frequent
+  //  - Hard   -> repeats the current step (does not advance)
+  //  - Good   -> advances one step; graduates once steps are exhausted
+  //  - Easy   -> graduates immediately, skipping remaining steps
+  // A lapse in the review phase sends the card back through the learning
+  // steps again, so a forgotten word is always reinforced before it can
+  // return to a long gap.
+  const LEARNING_STEPS_MIN = [1, 4, 10, 20]; // minutes, increasing spacing
 
   function isDue(id){
     const p = progress[id];
@@ -213,36 +218,55 @@
     let p = progress[id];
     if (!p) p = { learning:true, step:0, r:0, i:0, ef:2.5, due:Date.now(), lapses:0 };
 
-    if (grade === 0) {
-      p.lapses += 1;
-      p.learning = true;
-      p.step = 0;
-      p.due = Date.now() + LEARNING_STEPS_MIN[0]*60000;
-    } else if (grade === 3 && p.learning) {
-      // Easy skips remaining learning steps and graduates immediately
-      p.learning = false;
-      p.i = p.i > 0 ? Math.max(4, p.i * p.ef * 1.3) : 4;
-      p.ef = Math.min(2.8, p.ef + 0.15);
-      p.r += 1;
-      p.due = Date.now() + p.i * DAY_MS;
-    } else if (p.learning) {
-      const nextStep = p.step + 1;
-      if (nextStep < LEARNING_STEPS_MIN.length) {
-        p.step = nextStep;
-        p.due = Date.now() + LEARNING_STEPS_MIN[nextStep] * 60000;
-        if (grade === 1) p.ef = Math.max(1.3, p.ef - 0.1);
-      } else {
+    if (p.learning) {
+      if (grade === 0) { // Again: reset to the shortest step, most frequent
+        p.lapses += 1;
+        p.step = 0;
+        p.due = Date.now() + LEARNING_STEPS_MIN[0]*60000;
+      } else if (grade === 1) { // Hard: repeat the current step, still frequent
+        p.due = Date.now() + LEARNING_STEPS_MIN[p.step]*60000;
+      } else if (grade === 2) { // Good: advance one step, less frequent
+        const next = p.step + 1;
+        if (next < LEARNING_STEPS_MIN.length) {
+          p.step = next;
+          p.due = Date.now() + LEARNING_STEPS_MIN[next]*60000;
+        } else {
+          p.learning = false;
+          p.r += 1;
+          p.i = 1;
+          p.due = Date.now() + p.i * DAY_MS;
+        }
+      } else { // Easy: graduate immediately, skipping remaining steps
         p.learning = false;
-        p.i = 1;
         p.r += 1;
+        p.i = p.i > 0 ? Math.max(4, p.i * p.ef * 1.3) : 4;
+        p.ef = Math.min(2.8, p.ef + 0.15);
         p.due = Date.now() + p.i * DAY_MS;
       }
     } else {
-      if (grade === 1) { p.i = Math.max(1, p.i * 1.2); p.ef = Math.max(1.3, p.ef - 0.15); }
-      else if (grade === 2) { p.i = Math.max(1, p.i * p.ef); }
-      else { p.i = Math.max(1, p.i * p.ef * 1.3); p.ef = Math.min(2.8, p.ef + 0.15); }
-      p.r += 1;
-      p.due = Date.now() + p.i * DAY_MS;
+      // Graduated card in long-term review
+      if (grade === 0) { // lapse: back to learning, shrink the interval it'll return to
+        p.lapses += 1;
+        p.learning = true;
+        p.step = 0;
+        p.i = Math.max(1, p.i * 0.5);
+        p.ef = Math.max(1.3, p.ef - 0.2);
+        p.due = Date.now() + LEARNING_STEPS_MIN[0]*60000;
+      } else if (grade === 1) {
+        p.i = Math.max(1, p.i * 1.2);
+        p.ef = Math.max(1.3, p.ef - 0.15);
+        p.r += 1;
+        p.due = Date.now() + p.i * DAY_MS;
+      } else if (grade === 2) {
+        p.i = Math.max(1, p.i * p.ef);
+        p.r += 1;
+        p.due = Date.now() + p.i * DAY_MS;
+      } else {
+        p.i = Math.max(1, p.i * p.ef * 1.3);
+        p.ef = Math.min(2.8, p.ef + 0.15);
+        p.r += 1;
+        p.due = Date.now() + p.i * DAY_MS;
+      }
     }
 
     progress[id] = p;
@@ -451,8 +475,15 @@
     const item = session.queue[session.idx];
     const w = item.word;
     const wasNew = item.isNew;
+    const introducedNew = wasNew && !progress[w.id];
 
-    if (wasNew && !progress[w.id]) {
+    // snapshot everything needed to fully undo this grade
+    const prevProgress = progress[w.id] ? JSON.parse(JSON.stringify(progress[w.id])) : null;
+    const idxBefore = session.idx;
+    const statsBefore = Object.assign({}, session.stats);
+    const queueLenBefore = session.queue.length;
+
+    if (introducedNew) {
       dailyMeta.introduced += 1;
       saveDaily();
     }
@@ -463,16 +494,63 @@
     if (grade === 0) { session.stats.again += 1; haptic('warning'); }
     else haptic('success');
 
-    // if the card is due again soon (short learning step), resurface it later in
-    // THIS session rather than only relying on a future session
-    if (result.due - Date.now() < 30*60*1000) {
-      const insertPos = Math.min(session.queue.length, session.idx + 4 + Math.floor(Math.random()*4));
+    // if the card is due again soon (still in a short learning step), resurface it
+    // later in THIS session — how far ahead scales with how soon it's due, so a
+    // "Hard" card comes back sooner than a "Good" card, matching the interval growth
+    let requeued = false;
+    const minutesAway = (result.due - Date.now()) / 60000;
+    if (minutesAway < 30) {
+      const offset = Math.min(20, Math.max(3, Math.round(minutesAway * 1.3)));
+      const insertPos = Math.min(session.queue.length, session.idx + offset);
       session.queue.splice(insertPos, 0, { word:w, isNew:false });
+      requeued = true;
     }
+
+    session.lastAction = {
+      wordId: w.id, prevProgress, introducedNew,
+      idxBefore, statsBefore, queueLenBefore,
+      queueLenAfter: session.queue.length, requeued,
+    };
+    updateUndoButton();
 
     session.idx += 1;
     if (session.idx >= session.queue.length) await finishSession();
     else renderCurrentCard();
+  }
+
+  function undoLastGrade(){
+    const action = session && session.lastAction;
+    if (!action) return;
+
+    if (action.prevProgress) {
+      progress[action.wordId] = action.prevProgress;
+      saveCardProgress(action.wordId);
+    } else {
+      delete progress[action.wordId];
+      Storage.removeItem('p_' + action.wordId);
+    }
+
+    if (action.introducedNew) {
+      dailyMeta.introduced = Math.max(0, dailyMeta.introduced - 1);
+      saveDaily();
+    }
+
+    if (action.requeued) {
+      for (let i = session.queue.length - 1; i > action.idxBefore; i--) {
+        if (session.queue[i].word.id === action.wordId) { session.queue.splice(i,1); break; }
+      }
+    }
+
+    session.stats = action.statsBefore;
+    session.idx = action.idxBefore;
+    session.lastAction = null;
+    updateUndoButton();
+    renderCurrentCard();
+    haptic('light');
+  }
+
+  function updateUndoButton(){
+    document.getElementById('btn-undo').classList.toggle('hidden', !(session && session.lastAction));
   }
 
   async function finishSession(){
@@ -496,9 +574,10 @@
   function startSession(){
     const queue = buildSessionQueue();
     if (queue.length === 0) { renderHome(); return; }
-    session = { queue, idx:0, stats:{ new:0, reviewed:0, again:0 } };
+    session = { queue, idx:0, stats:{ new:0, reviewed:0, again:0 }, lastAction:null };
     showScreen('study');
     renderCurrentCard();
+    updateUndoButton();
   }
 
   // ---------- Render: Stats ----------
@@ -529,6 +608,7 @@
   document.getElementById('btn-stats').addEventListener('click', () => { renderStats(); showScreen('stats'); });
   document.getElementById('btn-done-home').addEventListener('click', goHome);
   document.getElementById('flashcard').addEventListener('click', flipCard);
+  document.getElementById('btn-undo').addEventListener('click', (e) => { e.stopPropagation(); undoLastGrade(); });
 
   document.getElementById('btn-sections').addEventListener('click', () => { renderChaptersScreen(); showScreen('chapters'); });
   document.getElementById('btn-all-chapters').addEventListener('click', () => {
