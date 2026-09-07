@@ -633,7 +633,7 @@
   // ---------- Support link ----------
   // Set this to your bot's @username (without the @) once you've deployed
   // the relay in api/bot-webhook.js — see README.md for setup steps.
-  const SUPPORT_BOT_USERNAME = 'your_bot_username';
+  const SUPPORT_BOT_USERNAME = 'huna_arabic_appbot';
 
   document.getElementById('btn-support').addEventListener('click', () => {
     const url = `https://t.me/${SUPPORT_BOT_USERNAME}`;
