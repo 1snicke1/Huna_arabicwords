@@ -369,10 +369,10 @@ body::before{
   cursor:pointer;
 }
 .grade-btn:active{ transform:scale(.96); }
-.grade-again{ background:linear-gradient(135deg,#a83a1f,var(--orange)); }
-.grade-hard{ background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.16); }
-.grade-good{ background:linear-gradient(135deg, var(--teal-dark), var(--teal)); }
-.grade-easy{ background:linear-gradient(135deg, var(--teal), var(--teal-bright)); }
+.grade-again{ background:linear-gradient(135deg,#B4392E,#E8703A); }
+.grade-hard{ background:linear-gradient(135deg,#A6740A,#D9A83D); }
+.grade-good{ background:linear-gradient(135deg,#1C8F6E,#3FCB9E); }
+.grade-easy{ background:linear-gradient(135deg,#1C6E86,#4FC3DE); }
 
 /* ---------- Done screen ---------- */
 .done-wrap{
