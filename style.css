@@ -324,16 +324,31 @@ body::before{
   padding:5px 14px; border-radius:99px;
   background:linear-gradient(135deg, var(--teal-dark), var(--teal-bright));
   color:#fff;
+  white-space:nowrap;
 }
-.card-arabic{
+.card-direction-hint{
+  margin-top:46px;
+  font-size:12px;
+  font-weight:700;
+  color:rgba(255,255,255,.4);
+  letter-spacing:.02em;
+}
+.card-word{
+  font-family:var(--font-ui);
+  font-size:28px;
+  line-height:1.35;
+  font-weight:800;
+  color:#fff;
+  margin-top:10px;
+}
+.card-word.is-arabic{
   font-family:var(--font-ar);
   font-size:44px;
   line-height:1.5;
   font-weight:600;
-  color:#fff;
-  margin-top:20px;
 }
-.card-arabic-small{ font-size:32px; color:rgba(255,255,255,.85); margin-top:0;}
+.card-word-small{ font-size:20px; font-weight:700; color:rgba(255,255,255,.85); margin-top:0; }
+.card-word-small.is-arabic{ font-family:var(--font-ar); font-size:32px; font-weight:600; }
 .tap-hint{
   margin-top:22px;
   font-size:12.5px;
@@ -346,10 +361,32 @@ body::before{
   margin:20px 0;
   opacity:.7;
 }
-.card-translation{
+.card-answer{
   font-size:21px;
   font-weight:700;
   color:#fff;
+}
+.card-answer.is-arabic{
+  font-family:var(--font-ar);
+  font-size:30px;
+  line-height:1.6;
+  font-weight:600;
+}
+.card-context{
+  margin-top:20px;
+  padding-top:16px;
+  border-top:1px solid rgba(255,255,255,.1);
+  font-family:var(--font-ar);
+  font-size:19px;
+  line-height:2;
+  color:rgba(255,255,255,.75);
+  text-align:center;
+  direction:rtl;
+}
+.card-context mark{
+  background:none;
+  color:var(--teal-bright);
+  font-weight:700;
 }
 
 .grade-row{
@@ -395,6 +432,7 @@ body::before{
 
 /* ---------- Stats screen ---------- */
 .stats-title{ font-size:22px; font-weight:800; margin-bottom:20px; }
+.stats-subtitle{ font-size:12px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--teal-bright); margin:0 0 8px 4px; }
 .stats-block{
   background:rgba(255,255,255,.05);
   border:1px solid rgba(255,255,255,.09);
@@ -429,6 +467,12 @@ body::before{
   font-family:var(--font-ui);
   font-weight:700;
 }
+.settings-row input[type="checkbox"]{
+  width:20px; height:20px;
+  accent-color:var(--teal-bright);
+  flex-shrink:0;
+}
+.settings-row label{ padding-right:12px; }
 
 /* back button (top-left, shown on sub-screens without Telegram BackButton fallback) */
 .back-btn{
@@ -444,5 +488,5 @@ body::before{
 
 @media (max-width:360px){
   .hero-number{ font-size:64px; }
-  .card-arabic{ font-size:36px; }
+  .card-word.is-arabic{ font-size:36px; }
 }

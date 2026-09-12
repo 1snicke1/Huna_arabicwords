@@ -126,9 +126,14 @@
   };
 
   // ---------- Word & chapter data ----------
-  const WORDS = WORDS_DATA.map(w => ({ id:w[0], vol:w[1], ch:w[2], dlg:w[3], ar:w[4], ru:w[5] }));
+  const WORDS = WORDS_DATA.map(w => ({ id:w[0], vol:w[1], ch:w[2], dlg:w[3], ar:w[4], ru:w[5], ctx:w[6]||null }));
   const TOTAL_VOL1 = WORDS.filter(w=>w.vol===1).length;
   const TOTAL_VOL2 = WORDS.filter(w=>w.vol===2).length;
+
+  // A learnable unit is a (word, direction) pair — "fwd" = Arabic shown, Russian
+  // recalled (as before); "rev" = Russian shown, Arabic recalled. Each has its
+  // own independent progress record, like Anki's "and reversed card" note type.
+  function cardKey(wordId, dir){ return dir === 'rev' ? `${wordId}r` : `${wordId}f`; }
 
   function findChapterEntry(vol, ch){
     const volEntry = CHAPTERS_DATA.find(e => e[0] === vol);
@@ -152,13 +157,13 @@
   const pluralWords = (n) => pluralRu(n, 'слово', 'слова', 'слов');
 
   // ---------- App state ----------
-  // progress[id] = { learning, step, r(eps after graduating), i(nterval days), ef, due(ms), lapses }
+  // progress[cardKey] = { learning, step, r(eps after graduating), i(nterval days), ef, due(ms), lapses }
   let progress = {};
-  let settings = { dailyLimit: 15, selection: [] }; // selection: [{vol,ch,dlg|null}]
+  let settings = { dailyLimit: 15, selection: [], reverseEnabled: true }; // selection: [{vol,ch,dlg|null}]
   let dailyMeta = { date: todayStr(), introduced: 0 };
   let streak = { lastDate: null, count: 0 };
 
-  let session = null; // {queue:[{word,isNew}], idx, stats:{new,reviewed,again}}
+  let session = null; // {queue:[{word,dir,isNew}], idx, stats:{new,reviewed,again}}
 
   // ---------- Load / persist ----------
   async function loadAll(){
@@ -176,14 +181,14 @@
     if (misc.settings) {
       try {
         const parsed = JSON.parse(misc.settings);
-        settings = Object.assign({ dailyLimit:15, selection:[] }, parsed);
+        settings = Object.assign({ dailyLimit:15, selection:[], reverseEnabled:true }, parsed);
         if (!Array.isArray(settings.selection)) settings.selection = [];
       } catch(e){}
     }
     if (dailyMeta.date !== todayStr()) dailyMeta = { date: todayStr(), introduced: 0 };
   }
 
-  function saveCardProgress(id){ return Storage.setItem('p_'+id, JSON.stringify(progress[id])); }
+  function saveCardProgress(key){ return Storage.setItem('p_'+key, JSON.stringify(progress[key])); }
   function saveDaily(){ return Storage.setItem('daily', JSON.stringify(dailyMeta)); }
   function saveStreak(){ return Storage.setItem('streak', JSON.stringify(streak)); }
   function saveSettings(){ return Storage.setItem('settings', JSON.stringify(settings)); }
@@ -284,8 +289,30 @@
     });
   }
   function pool(list){ return list.filter(matchesSelection); }
-  function dueWords(){ return pool(WORDS).filter(w => isDue(w.id)); }
-  function newWords(){ return pool(WORDS).filter(w => !progress[w.id]); }
+
+  // A reverse ("rev") card only becomes available once its forward
+  // counterpart has graduated out of learning — recognizing a word reliably
+  // comes before being asked to produce it from memory.
+  function reverseUnlocked(w){
+    const fwd = progress[cardKey(w.id,'fwd')];
+    return !!fwd && !fwd.learning;
+  }
+
+  function dueCards(){
+    const cards = [];
+    pool(WORDS).forEach(w => {
+      if (isDue(cardKey(w.id,'fwd'))) cards.push({ word:w, dir:'fwd' });
+      if (settings.reverseEnabled && isDue(cardKey(w.id,'rev'))) cards.push({ word:w, dir:'rev' });
+    });
+    return cards;
+  }
+  function newForwardWords(){
+    return pool(WORDS).filter(w => !progress[cardKey(w.id,'fwd')]);
+  }
+  function newReverseWords(){
+    if (!settings.reverseEnabled) return [];
+    return pool(WORDS).filter(w => reverseUnlocked(w) && !progress[cardKey(w.id,'rev')]);
+  }
 
   function selectionSummaryText(){
     if (settings.selection.length === 0) return 'Все главы';
@@ -304,14 +331,19 @@
   }
 
   function buildSessionQueue(){
-    const due = shuffle(dueWords());
-    const remainingNewQuota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
-    const fresh = newWords().slice(0, remainingNewQuota);
+    const due = shuffle(dueCards());
+    const remainingQuota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
+    const freshForward = newForwardWords();
+    const freshReverse = newReverseWords();
+    const fresh = [];
+    let quota = remainingQuota;
+    for (const w of freshForward) { if (quota<=0) break; fresh.push({word:w, dir:'fwd'}); quota--; }
+    for (const w of freshReverse) { if (quota<=0) break; fresh.push({word:w, dir:'rev'}); quota--; }
 
-    const queue = due.map(w => ({ word:w, isNew:false }));
-    fresh.forEach((w, i) => {
+    const queue = due.map(c => ({ word:c.word, dir:c.dir, isNew:false }));
+    fresh.forEach((c, i) => {
       const pos = Math.min(queue.length, (i+1)*3 + i);
-      queue.splice(pos, 0, { word:w, isNew:true });
+      queue.splice(pos, 0, { word:c.word, dir:c.dir, isNew:true });
     });
     return queue;
   }
@@ -344,20 +376,21 @@
 
   // ---------- Render: Home ----------
   function renderHome(){
-    const due = dueWords().length;
+    const due = dueCards().length;
     const remainingQuota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
-    const freshAvailable = Math.min(newWords().length, remainingQuota);
+    const freshCount = newForwardWords().length + newReverseWords().length;
+    const freshAvailable = Math.min(freshCount, remainingQuota);
     const sessionSize = due + freshAvailable;
 
     document.getElementById('due-count').textContent = sessionSize;
-    const learnedCount = pool(WORDS).filter(w => progress[w.id]).length;
+    const learnedCount = pool(WORDS).filter(w => progress[cardKey(w.id,'fwd')]).length;
     document.getElementById('stat-learned').textContent = learnedCount;
     document.getElementById('stat-total').textContent = pool(WORDS).length;
     document.getElementById('stat-streak').textContent = streak.count || 0;
 
     let label;
     if (sessionSize === 0) {
-      label = newWords().length > 0 ? 'дневной лимит новых слов исчерпан' : 'на сегодня всё повторено 🎉';
+      label = freshCount > 0 ? 'дневной лимит новых слов исчерпан' : 'на сегодня всё повторено 🎉';
     }
     else if (due === 0) label = 'новых слов готово к изучению';
     else if (freshAvailable === 0) label = 'слов к повторению сегодня';
@@ -446,13 +479,42 @@
   }
 
   // ---------- Render: Study ----------
+  function escapeHtml(s){
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function setWordDisplay(el, text, isArabic){
+    el.textContent = text;
+    el.classList.toggle('is-arabic', isArabic);
+  }
+
   function renderCurrentCard(){
     const item = session.queue[session.idx];
     const w = item.word;
+    const dir = item.dir;
+
     document.getElementById('card-vol-kicker').textContent = `Том ${w.vol===2?'II':'I'} · Глава ${w.ch}`;
-    document.getElementById('card-arabic').textContent = w.ar;
-    document.getElementById('card-arabic-2').textContent = w.ar;
-    document.getElementById('card-translation').textContent = w.ru;
+    document.getElementById('card-direction-hint').textContent =
+      dir === 'rev' ? 'Переведите на арабский' : 'Переведите на русский';
+
+    const frontText = dir === 'rev' ? w.ru : w.ar;
+    const answerText = dir === 'rev' ? w.ar : w.ru;
+
+    setWordDisplay(document.getElementById('card-front-word'), frontText, dir !== 'rev');
+    setWordDisplay(document.getElementById('card-back-prompt'), frontText, dir !== 'rev');
+    setWordDisplay(document.getElementById('card-back-answer'), answerText, dir === 'rev');
+
+    document.getElementById('tap-hint').textContent =
+      dir === 'rev' ? 'Нажмите, чтобы увидеть слово на арабском' : 'Нажмите, чтобы посмотреть перевод';
+
+    const ctxEl = document.getElementById('card-context');
+    if (w.ctx) {
+      const [sentence, start, end] = w.ctx;
+      ctxEl.innerHTML = escapeHtml(sentence.slice(0,start)) + '<mark>' + escapeHtml(sentence.slice(start,end)) + '</mark>' + escapeHtml(sentence.slice(end));
+      ctxEl.classList.remove('hidden');
+    } else {
+      ctxEl.innerHTML = '';
+      ctxEl.classList.add('hidden');
+    }
 
     document.getElementById('card-back').classList.add('hidden');
     document.querySelector('.card-front').classList.remove('hidden');
@@ -474,11 +536,13 @@
   async function onGrade(grade){
     const item = session.queue[session.idx];
     const w = item.word;
+    const dir = item.dir;
+    const key = cardKey(w.id, dir);
     const wasNew = item.isNew;
-    const introducedNew = wasNew && !progress[w.id];
+    const introducedNew = wasNew && !progress[key];
 
     // snapshot everything needed to fully undo this grade
-    const prevProgress = progress[w.id] ? JSON.parse(JSON.stringify(progress[w.id])) : null;
+    const prevProgress = progress[key] ? JSON.parse(JSON.stringify(progress[key])) : null;
     const idxBefore = session.idx;
     const statsBefore = Object.assign({}, session.stats);
     const queueLenBefore = session.queue.length;
@@ -488,7 +552,7 @@
       saveDaily();
     }
 
-    const result = gradeCard(w.id, grade);
+    const result = gradeCard(key, grade);
     session.stats.reviewed += 1;
     if (wasNew) session.stats.new += 1;
     if (grade === 0) { session.stats.again += 1; haptic('warning'); }
@@ -502,12 +566,12 @@
     if (minutesAway < 30) {
       const offset = Math.min(20, Math.max(3, Math.round(minutesAway * 1.3)));
       const insertPos = Math.min(session.queue.length, session.idx + offset);
-      session.queue.splice(insertPos, 0, { word:w, isNew:false });
+      session.queue.splice(insertPos, 0, { word:w, dir, isNew:false });
       requeued = true;
     }
 
     session.lastAction = {
-      wordId: w.id, prevProgress, introducedNew,
+      cardKey: key, prevProgress, introducedNew,
       idxBefore, statsBefore, queueLenBefore,
       queueLenAfter: session.queue.length, requeued,
     };
@@ -523,11 +587,11 @@
     if (!action) return;
 
     if (action.prevProgress) {
-      progress[action.wordId] = action.prevProgress;
-      saveCardProgress(action.wordId);
+      progress[action.cardKey] = action.prevProgress;
+      saveCardProgress(action.cardKey);
     } else {
-      delete progress[action.wordId];
-      Storage.removeItem('p_' + action.wordId);
+      delete progress[action.cardKey];
+      Storage.removeItem('p_' + action.cardKey);
     }
 
     if (action.introducedNew) {
@@ -537,7 +601,8 @@
 
     if (action.requeued) {
       for (let i = session.queue.length - 1; i > action.idxBefore; i--) {
-        if (session.queue[i].word.id === action.wordId) { session.queue.splice(i,1); break; }
+        const item = session.queue[i];
+        if (cardKey(item.word.id, item.dir) === action.cardKey) { session.queue.splice(i,1); break; }
       }
     }
 
@@ -584,7 +649,7 @@
   function renderStats(){
     let nNew=0, nLearning=0, nReview=0, nMastered=0;
     WORDS.forEach(w => {
-      const s = cardState(w.id);
+      const s = cardState(cardKey(w.id,'fwd'));
       if (s==='new') nNew++;
       else if (s==='learning') nLearning++;
       else if (s==='mastered') nMastered++;
@@ -595,12 +660,28 @@
     document.getElementById('s-review').textContent = nReview;
     document.getElementById('s-mastered').textContent = nMastered;
 
-    const v1Learned = WORDS.filter(w=>w.vol===1 && progress[w.id]).length;
-    const v2Learned = WORDS.filter(w=>w.vol===2 && progress[w.id]).length;
+    let rLocked=0, rNew=0, rLearning=0, rReview=0, rMastered=0;
+    WORDS.forEach(w => {
+      if (!reverseUnlocked(w)) { rLocked++; return; }
+      const s = cardState(cardKey(w.id,'rev'));
+      if (s==='new') rNew++;
+      else if (s==='learning') rLearning++;
+      else if (s==='mastered') rMastered++;
+      else rReview++;
+    });
+    document.getElementById('s-rev-locked').textContent = rLocked;
+    document.getElementById('s-rev-new').textContent = rNew;
+    document.getElementById('s-rev-learning').textContent = rLearning;
+    document.getElementById('s-rev-review').textContent = rReview;
+    document.getElementById('s-rev-mastered').textContent = rMastered;
+
+    const v1Learned = WORDS.filter(w=>w.vol===1 && progress[cardKey(w.id,'fwd')]).length;
+    const v2Learned = WORDS.filter(w=>w.vol===2 && progress[cardKey(w.id,'fwd')]).length;
     document.getElementById('s-vol1').textContent = `${v1Learned} / ${TOTAL_VOL1}`;
     document.getElementById('s-vol2').textContent = `${v2Learned} / ${TOTAL_VOL2}`;
 
     document.getElementById('daily-limit').value = String(settings.dailyLimit);
+    document.getElementById('toggle-reverse').checked = settings.reverseEnabled;
   }
 
   // ---------- Event wiring ----------
@@ -630,6 +711,12 @@
     saveSettings();
   });
 
+  document.getElementById('toggle-reverse').addEventListener('change', (e) => {
+    settings.reverseEnabled = e.target.checked;
+    saveSettings();
+    renderHome();
+  });
+
   // ---------- Support link ----------
   // Set this to your bot's @username (without the @) once you've deployed
   // the relay in api/bot-webhook.js — see README.md for setup steps.
@@ -648,7 +735,7 @@
     progress = {};
     dailyMeta = { date: todayStr(), introduced: 0 };
     streak = { lastDate:null, count:0 };
-    settings = { dailyLimit:15, selection:[] };
+    settings = { dailyLimit:15, selection:[], reverseEnabled:true };
     renderStats();
     renderHome();
   });

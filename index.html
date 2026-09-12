@@ -91,13 +91,15 @@
       <div class="flashcard" id="flashcard">
         <div class="card-face card-front">
           <div class="card-kicker" id="card-vol-kicker">Том I</div>
-          <div class="card-arabic" id="card-arabic" dir="rtl" lang="ar"></div>
-          <div class="tap-hint">Нажмите, чтобы посмотреть перевод</div>
+          <div class="card-direction-hint" id="card-direction-hint"></div>
+          <div class="card-word" id="card-front-word"></div>
+          <div class="tap-hint" id="tap-hint">Нажмите, чтобы посмотреть перевод</div>
         </div>
         <div class="card-face card-back hidden" id="card-back">
-          <div class="card-arabic card-arabic-small" id="card-arabic-2" dir="rtl" lang="ar"></div>
+          <div class="card-word card-word-small" id="card-back-prompt"></div>
           <div class="card-divider"></div>
-          <div class="card-translation" id="card-translation"></div>
+          <div class="card-answer" id="card-back-answer"></div>
+          <div class="card-context hidden" id="card-context"></div>
         </div>
       </div>
     </div>
@@ -143,6 +145,7 @@
     <button class="back-btn back-btn-inpage hidden" data-back><svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <div class="stats-title">Статистика</div>
 
+    <div class="stats-subtitle">Арабский → Русский</div>
     <div class="stats-block">
       <div class="stats-row"><span>Новые</span><span id="s-new">0</span></div>
       <div class="stats-row"><span>Изучаются</span><span id="s-learning">0</span></div>
@@ -150,9 +153,23 @@
       <div class="stats-row"><span>Освоено</span><span id="s-mastered">0</span></div>
     </div>
 
+    <div class="stats-subtitle">Русский → Арабский</div>
+    <div class="stats-block">
+      <div class="stats-row"><span>Пока недоступно</span><span id="s-rev-locked">0</span></div>
+      <div class="stats-row"><span>Новые</span><span id="s-rev-new">0</span></div>
+      <div class="stats-row"><span>Изучаются</span><span id="s-rev-learning">0</span></div>
+      <div class="stats-row"><span>Повторяются</span><span id="s-rev-review">0</span></div>
+      <div class="stats-row"><span>Освоено</span><span id="s-rev-mastered">0</span></div>
+    </div>
+
     <div class="stats-block">
       <div class="stats-row"><span>Том I</span><span id="s-vol1">0 / 386</span></div>
       <div class="stats-row"><span>Том II</span><span id="s-vol2">0 / 385</span></div>
+    </div>
+
+    <div class="settings-row">
+      <label for="toggle-reverse">Обратное направление (RU → AR)</label>
+      <input type="checkbox" id="toggle-reverse" checked>
     </div>
 
     <div class="settings-row">
