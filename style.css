@@ -56,14 +56,13 @@ html,body{
 .screen{ display:flex; flex-direction:column; flex:1; padding-top:22px; }
 .hidden{ display:none !important; }
 
-#screen-home{ position:relative; z-index:0; overflow:hidden; }
-.home-watermark{
-  position:absolute;
-  z-index:-1;
-  right:0; bottom:0;
-  width:270px; height:auto;
-  opacity:.08;
-  pointer-events:none;
+#screen-home{
+  position:relative;
+  overflow:hidden;
+  background-image:url('assets/logo-mark-faded.png');
+  background-repeat:no-repeat;
+  background-position:right -14px bottom 0;
+  background-size:270px auto;
 }
 
 /* subtle background watermark pattern, echoing the geometric motif on the covers */
@@ -326,20 +325,13 @@ body::before{
   color:#fff;
   white-space:nowrap;
 }
-.card-direction-hint{
-  margin-top:46px;
-  font-size:12px;
-  font-weight:700;
-  color:rgba(255,255,255,.4);
-  letter-spacing:.02em;
-}
 .card-word{
   font-family:var(--font-ui);
   font-size:28px;
   line-height:1.35;
   font-weight:800;
   color:#fff;
-  margin-top:10px;
+  margin-top:46px;
 }
 .card-word.is-arabic{
   font-family:var(--font-ar);

@@ -358,7 +358,9 @@
   };
   const BACK_ENABLED_SCREENS = ['study','stats','chapters'];
 
+  let currentScreenName = 'home';
   function showScreen(name){
+    currentScreenName = name;
     Object.values(screens).forEach(s => s.classList.add('hidden'));
     screens[name].classList.remove('hidden');
     document.querySelectorAll('.back-btn-inpage').forEach(b => b.classList.add('hidden'));
@@ -493,8 +495,6 @@
     const dir = item.dir;
 
     document.getElementById('card-vol-kicker').textContent = `Том ${w.vol===2?'II':'I'} · Глава ${w.ch}`;
-    document.getElementById('card-direction-hint').textContent =
-      dir === 'rev' ? 'Переведите на арабский' : 'Переведите на русский';
 
     const frontText = dir === 'rev' ? w.ru : w.ar;
     const answerText = dir === 'rev' ? w.ar : w.ru;
@@ -746,5 +746,22 @@
     renderHome();
     showScreen('home');
   })();
+
+  // Telegram's WebView can freeze the page while the Mini App is backgrounded
+  // and occasionally repaints only a stale layer when it resumes. Force a
+  // fresh render of whatever screen is active so the person never has to
+  // manually reload the app to see live content again.
+  function refreshCurrentScreen(){
+    if (currentScreenName === 'home') renderHome();
+    else if (currentScreenName === 'stats') renderStats();
+    else if (currentScreenName === 'chapters') renderChaptersScreen();
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshCurrentScreen();
+  });
+  window.addEventListener('pageshow', refreshCurrentScreen);
+  if (tg && tg.onEvent) {
+    tg.onEvent('activated', refreshCurrentScreen);
+  }
 
 })();
