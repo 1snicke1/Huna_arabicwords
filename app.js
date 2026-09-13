@@ -332,13 +332,18 @@
 
   function buildSessionQueue(){
     const due = shuffle(dueCards());
+    // the daily new-word limit paces *new vocabulary* only. Reverse cards
+    // unlocked from words already learned aren't new vocabulary — they
+    // become available immediately, in parallel with everything else,
+    // uncapped, so mastering a word's meaning promptly offers the
+    // production (RU→AR) side too instead of waiting for tomorrow's quota.
     const remainingQuota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
     const freshForward = newForwardWords();
     const freshReverse = newReverseWords();
     const fresh = [];
     let quota = remainingQuota;
     for (const w of freshForward) { if (quota<=0) break; fresh.push({word:w, dir:'fwd'}); quota--; }
-    for (const w of freshReverse) { if (quota<=0) break; fresh.push({word:w, dir:'rev'}); quota--; }
+    freshReverse.forEach(w => fresh.push({word:w, dir:'rev'}));
 
     const queue = due.map(c => ({ word:c.word, dir:c.dir, isNew:false }));
     fresh.forEach((c, i) => {
@@ -380,8 +385,9 @@
   function renderHome(){
     const due = dueCards().length;
     const remainingQuota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
-    const freshCount = newForwardWords().length + newReverseWords().length;
-    const freshAvailable = Math.min(freshCount, remainingQuota);
+    const freshForwardCount = newForwardWords().length;
+    const freshReverseCount = newReverseWords().length; // uncapped, always available once unlocked
+    const freshAvailable = Math.min(freshForwardCount, remainingQuota) + freshReverseCount;
     const sessionSize = due + freshAvailable;
 
     document.getElementById('due-count').textContent = sessionSize;
@@ -392,7 +398,7 @@
 
     let label;
     if (sessionSize === 0) {
-      label = freshCount > 0 ? 'дневной лимит новых слов исчерпан' : 'на сегодня всё повторено 🎉';
+      label = freshForwardCount > 0 ? 'дневной лимит новых слов исчерпан' : 'на сегодня всё повторено 🎉';
     }
     else if (due === 0) label = 'новых слов готово к изучению';
     else if (freshAvailable === 0) label = 'слов к повторению сегодня';
@@ -540,6 +546,9 @@
     const key = cardKey(w.id, dir);
     const wasNew = item.isNew;
     const introducedNew = wasNew && !progress[key];
+    // only forward cards count against the daily new-word pace — reverse
+    // cards are practice on already-learned words, not new vocabulary
+    const countsAgainstQuota = introducedNew && dir === 'fwd';
 
     // snapshot everything needed to fully undo this grade
     const prevProgress = progress[key] ? JSON.parse(JSON.stringify(progress[key])) : null;
@@ -547,7 +556,7 @@
     const statsBefore = Object.assign({}, session.stats);
     const queueLenBefore = session.queue.length;
 
-    if (introducedNew) {
+    if (countsAgainstQuota) {
       dailyMeta.introduced += 1;
       saveDaily();
     }
@@ -571,7 +580,7 @@
     }
 
     session.lastAction = {
-      cardKey: key, prevProgress, introducedNew,
+      cardKey: key, prevProgress, countsAgainstQuota,
       idxBefore, statsBefore, queueLenBefore,
       queueLenAfter: session.queue.length, requeued,
     };
@@ -594,7 +603,7 @@
       Storage.removeItem('p_' + action.cardKey);
     }
 
-    if (action.introducedNew) {
+    if (action.countsAgainstQuota) {
       dailyMeta.introduced = Math.max(0, dailyMeta.introduced - 1);
       saveDaily();
     }
