@@ -2,7 +2,8 @@
 //
 // Support relay for the Huna Arabic bot. No database needed:
 //   - /start replies with a link to open the Mini App — nothing is forwarded.
-//   - /support replies with a "ForceReply" prompt asking for the question.
+//   - /support first shows two quick self-help tips with a button to proceed
+//     anyway. Tapping it sends a "ForceReply" prompt asking for the question;
 //     Telegram then marks the user's NEXT message as a reply to that prompt,
 //     which is how we know (statelessly) that THIS message should be relayed —
 //     random messages sent without going through /support are not forwarded.
@@ -16,6 +17,15 @@
 //   OWNER_CHAT_ID  — your own numeric Telegram id (get it from @userinfobot)
 //   MINI_APP_URL   — link opened from /start (e.g. https://t.me/huna_arabic_appbot/app
 //                    or your plain hosting URL) — optional, has a fallback text
+
+const SUPPORT_TIPS =
+  'Прежде чем писать в поддержку, попробуйте это:\n\n' +
+  '1️⃣ Как отключить дневной лимит новых слов — в приложении откройте ' +
+  '«Подробная статистика» → «Новых слов в день» → выберите «Без ограничений».\n\n' +
+  '2️⃣ Если бот или приложение не отвечает — проверьте соединение с ' +
+  'интернетом и попробуйте закрыть и заново открыть приложение через ' +
+  'кнопку в этом чате.\n\n' +
+  'Не помогло?';
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(200).send('OK');
@@ -34,10 +44,24 @@ module.exports = async function handler(req, res) {
 
   const update = req.body;
   const msg = update && update.message;
-
-  if (!msg) return res.status(200).send('OK');
+  const callback = update && update.callback_query;
 
   try {
+    // ---- inline button taps ----
+    if (callback) {
+      await call('answerCallbackQuery', { callback_query_id: callback.id });
+      if (callback.data === 'contact_support') {
+        await call('sendMessage', {
+          chat_id: callback.message.chat.id,
+          text: 'Напишите ваш вопрос одним сообщением — он будет передан в поддержку 👇',
+          reply_markup: { force_reply: true },
+        });
+      }
+      return res.status(200).send('OK');
+    }
+
+    if (!msg) return res.status(200).send('OK');
+
     if (String(msg.chat.id) === String(OWNER_CHAT_ID)) {
       // ---- message from the owner: only act if it's a reply to a forwarded user message
       const fwd = msg.reply_to_message && msg.reply_to_message.forward_from;
@@ -56,8 +80,8 @@ module.exports = async function handler(req, res) {
     // ---- messages from regular users ----
     if (msg.text === '/start') {
       const text = MINI_APP_URL
-        ? `Здравствуйте! Откройте приложение здесь: ${MINI_APP_URL}\n\nЕсли возникнут вопросы — отправьте команду /support.`
-        : 'Здравствуйте! Если возникнут вопросы — отправьте команду /support.';
+        ? `Ассаламу алейкум! Откройте приложение здесь: ${MINI_APP_URL}\n\nЕсли возникнут вопросы — отправьте команду /support.`
+        : 'Ассаламу алейкум! Если возникнут вопросы — отправьте команду /support.';
       await call('sendMessage', { chat_id: msg.chat.id, text });
       return res.status(200).send('OK');
     }
@@ -65,8 +89,10 @@ module.exports = async function handler(req, res) {
     if (msg.text === '/support') {
       await call('sendMessage', {
         chat_id: msg.chat.id,
-        text: 'Напишите ваш вопрос одним сообщением — он будет передан в поддержку 👇',
-        reply_markup: { force_reply: true },
+        text: SUPPORT_TIPS,
+        reply_markup: {
+          inline_keyboard: [[{ text: '✍️ Всё равно написать в поддержку', callback_data: 'contact_support' }]],
+        },
       });
       return res.status(200).send('OK');
     }
