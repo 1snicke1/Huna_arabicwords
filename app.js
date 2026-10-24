@@ -29,7 +29,9 @@
   // (rate limits, temporary errors) never silently loses progress. Reads prefer
   // CloudStorage but fall back to the local mirror per-key if a value is missing.
   const Storage = {
-    useCloud: !!(tg && tg.CloudStorage),
+    // CloudStorage needs Bot API 6.9+; outside Telegram (or in very old
+    // clients) its methods throw, so fall back to localStorage only
+    useCloud: !!(tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9')),
 
     getItem(key){
       return new Promise((resolve) => {
@@ -145,8 +147,28 @@
     return e ? e[1] : '';
   }
 
+  const WORD_BY_ID = new Map(WORDS.map(w => [w.id, w]));
+  function parseCardKey(key){
+    return { word: WORD_BY_ID.get(parseInt(key, 10)), dir: key.endsWith('r') ? 'rev' : 'fwd' };
+  }
+
+  // ---------- Days ----------
+  // Like Anki, a "day" starts at 4:00 local time, not at midnight UTC: a
+  // review due "tomorrow" is due from tomorrow 4:00, whatever time of day it
+  // was answered, and a late-night session still counts as the same day.
   const DAY_MS = 86400000;
-  const todayStr = () => new Date().toISOString().slice(0,10);
+  const ROLLOVER_HOUR = 4;
+  function dayNumber(ms){
+    const d = new Date(ms - ROLLOVER_HOUR * 3600000);
+    return Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / DAY_MS);
+  }
+  function dayStartMs(day){
+    const d = new Date(day * DAY_MS);
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), ROLLOVER_HOUR).getTime();
+  }
+  const dayKey = (day) => new Date(day * DAY_MS).toISOString().slice(0,10);
+  const today = () => dayNumber(Date.now());
+  const todayStr = () => dayKey(today());
 
   function pluralRu(n, one, few, many){
     const mod10 = n % 10, mod100 = n % 100;
@@ -157,13 +179,16 @@
   const pluralWords = (n) => pluralRu(n, 'слово', 'слова', 'слов');
 
   // ---------- App state ----------
-  // progress[cardKey] = { learning, step, r(eps after graduating), i(nterval days), ef, due(ms), lapses }
+  // progress[cardKey] = {
+  //   learning, relearn (lapsed review card going through relearning steps),
+  //   step, r(eps after graduating), i(nterval days), ef, due(ms), dueDay (review cards),
+  //   lapses, leech }
   let progress = {};
   let settings = { dailyLimit: 15, selection: [], reverseEnabled: true }; // selection: [{vol,ch,dlg|null}]
   let dailyMeta = { date: todayStr(), introduced: 0 };
   let streak = { lastDate: null, count: 0 };
 
-  let session = null; // {queue:[{word,dir,isNew}], idx, stats:{new,reviewed,again}}
+  let session = null; // see startSessionQueues()
 
   // ---------- Load / persist ----------
   async function loadAll(){
@@ -174,7 +199,7 @@
 
     progress = {};
     for (const k in progVals) {
-      try { progress[k.slice(2)] = JSON.parse(progVals[k]); } catch(e){}
+      try { progress[k.slice(2)] = migrateCard(JSON.parse(progVals[k])); } catch(e){}
     }
     if (misc.daily) { try { dailyMeta = JSON.parse(misc.daily); } catch(e){} }
     if (misc.streak) { try { streak = JSON.parse(misc.streak); } catch(e){} }
@@ -185,6 +210,10 @@
         if (!Array.isArray(settings.selection)) settings.selection = [];
       } catch(e){}
     }
+    rollDailyMeta();
+  }
+  // the app may stay open across the 4:00 day boundary
+  function rollDailyMeta(){
     if (dailyMeta.date !== todayStr()) dailyMeta = { date: todayStr(), introduced: 0 };
   }
 
@@ -194,89 +223,177 @@
   function saveSettings(){ return Storage.setItem('settings', JSON.stringify(settings)); }
 
   // ---------- SRS logic ----------
-  // Faithful to Anki's model: a card moves through short "learning" steps
-  // (minutes) before graduating into long-term day-based "review" scheduling.
-  //  - Again  -> back to the very first (shortest) step, most frequent
-  //  - Hard   -> repeats the current step (does not advance)
-  //  - Good   -> advances one step; graduates once steps are exhausted
-  //  - Easy   -> graduates immediately, skipping remaining steps
-  // A lapse in the review phase sends the card back through the learning
-  // steps again, so a forgotten word is always reinforced before it can
-  // return to a long gap.
-  const LEARNING_STEPS_MIN = [1, 4, 10, 20]; // minutes, increasing spacing
+  // Anki's scheduler (SM-2, as in Anki's v3 scheduler with default deck options).
+  //
+  // New card -> learning steps (minutes) -> graduates into day-based review.
+  //  - Again  -> back to the first step
+  //  - Hard   -> first step: halfway between steps 1 and 2; later steps: repeat the step
+  //  - Good   -> next step; after the last step graduates with a 1-day interval
+  //  - Easy   -> graduates immediately with a 4-day interval
+  //
+  // Review card (interval in days, ease factor starting at 250%):
+  //  - Again  -> lapse: ease −20%, goes through relearning steps, then comes
+  //              back with a shortened interval
+  //  - Hard   -> interval × 1.2, ease −15%
+  //  - Good   -> interval × ease (plus half the days it was overdue)
+  //  - Easy   -> interval × ease × 1.3 (plus all overdue days), ease +15%
+  // Intervals get a small random "fuzz" so words learned together don't
+  // keep coming back on the same day forever.
+  const LEARNING_STEPS_MIN = [1, 10];
+  const RELEARNING_STEPS_MIN = [10];
+  const GRADUATING_IVL = 1;
+  const EASY_IVL = 4;
+  const START_EASE = 2.5;
+  const MIN_EASE = 1.3;
+  const HARD_MULT = 1.2;
+  const EASY_BONUS = 1.3;
+  const LAPSE_IVL_MULT = 0;   // "New interval" after a lapse (Anki default 0 → minimum interval)
+  const MIN_IVL = 1;
+  const MAX_IVL = 36500;
+  const LEECH_LAPSES = 8;
+  const LEARN_AHEAD_MIN = 20; // learning cards due within this window may be shown early
+  const MATURE_IVL = 21;
 
-  function isDue(id){
+  function migrateCard(p){
+    // older versions stored review due as "answer time + N×24h" and used 4 learning steps
+    if (!p.learning) {
+      if (typeof p.dueDay !== 'number') p.dueDay = dayNumber(p.due);
+      p.i = Math.max(MIN_IVL, Math.round(p.i || MIN_IVL));
+      p.due = dayStartMs(p.dueDay);
+    } else {
+      if (typeof p.relearn !== 'boolean') p.relearn = (p.r || 0) > 0;
+      const steps = p.relearn ? RELEARNING_STEPS_MIN : LEARNING_STEPS_MIN;
+      p.step = Math.min(p.step || 0, steps.length - 1);
+    }
+    if (typeof p.ef !== 'number') p.ef = START_EASE;
+    if (typeof p.lapses !== 'number') p.lapses = 0;
+    return p;
+  }
+
+  function isDue(id, now = Date.now()){
     const p = progress[id];
     if (!p) return false;
-    return p.due <= Date.now();
+    return p.due <= now;
   }
   function cardState(id){
     const p = progress[id];
     if (!p) return 'new';
     if (p.learning) return 'learning';
-    if (p.i >= 21) return 'mastered';
+    if (p.i >= MATURE_IVL) return 'mastered';
     return 'review';
   }
 
-  function gradeCard(id, grade){
-    // grade: 0 Again, 1 Hard, 2 Good, 3 Easy
-    let p = progress[id];
-    if (!p) p = { learning:true, step:0, r:0, i:0, ef:2.5, due:Date.now(), lapses:0 };
+  // deterministic per card+rep, so the interval shown on a button is exactly
+  // what that button will schedule
+  function fuzzRandom(id, reps){
+    let h = 2166136261;
+    const s = id + ':' + reps;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 10000) / 10000;
+  }
+  // Anki's fuzz: ±15% of the part of the interval between 2.5 and 7 days,
+  // ±10% of the part between 7 and 20, ±5% beyond that, plus one day
+  function fuzzInterval(ivl, id, reps){
+    if (ivl < 2.5) return Math.round(ivl);
+    let delta = 1;
+    [[2.5, 7, 0.15], [7, 20, 0.1], [20, Infinity, 0.05]].forEach(([from, to, factor]) => {
+      delta += factor * Math.max(0, Math.min(ivl, to) - from);
+    });
+    const lo = Math.max(2, Math.round(ivl - delta));
+    const hi = Math.max(lo, Math.round(ivl + delta));
+    return lo + Math.floor(fuzzRandom(id, reps) * (hi - lo + 1));
+  }
+  const clampIvl = (d) => Math.min(MAX_IVL, Math.max(MIN_IVL, Math.round(d)));
+
+  function toReview(p, ivl, now){
+    p.learning = false;
+    p.relearn = false;
+    p.step = 0;
+    p.i = clampIvl(ivl);
+    p.dueDay = dayNumber(now) + p.i;
+    p.due = dayStartMs(p.dueDay);
+  }
+  function toStep(p, step, minutes, now){
+    p.learning = true;
+    p.step = step;
+    p.due = now + Math.round(minutes * 60000);
+    delete p.dueDay;
+  }
+
+  // Pure: returns the card as it would be after answering `grade`
+  // (0 Again, 1 Hard, 2 Good, 3 Easy), without touching stored progress.
+  function scheduleCard(id, grade, now = Date.now()){
+    const p = progress[id]
+      ? JSON.parse(JSON.stringify(progress[id]))
+      : { learning:true, relearn:false, step:0, r:0, i:0, ef:START_EASE, due:now, lapses:0 };
 
     if (p.learning) {
-      if (grade === 0) { // Again: reset to the shortest step, most frequent
-        p.lapses += 1;
-        p.step = 0;
-        p.due = Date.now() + LEARNING_STEPS_MIN[0]*60000;
-      } else if (grade === 1) { // Hard: repeat the current step, still frequent
-        p.due = Date.now() + LEARNING_STEPS_MIN[p.step]*60000;
-      } else if (grade === 2) { // Good: advance one step, less frequent
-        const next = p.step + 1;
-        if (next < LEARNING_STEPS_MIN.length) {
-          p.step = next;
-          p.due = Date.now() + LEARNING_STEPS_MIN[next]*60000;
-        } else {
-          p.learning = false;
-          p.r += 1;
-          p.i = 1;
-          p.due = Date.now() + p.i * DAY_MS;
-        }
-      } else { // Easy: graduate immediately, skipping remaining steps
-        p.learning = false;
-        p.r += 1;
-        p.i = p.i > 0 ? Math.max(4, p.i * p.ef * 1.3) : 4;
-        p.ef = Math.min(2.8, p.ef + 0.15);
-        p.due = Date.now() + p.i * DAY_MS;
-      }
-    } else {
-      // Graduated card in long-term review
-      if (grade === 0) { // lapse: back to learning, shrink the interval it'll return to
-        p.lapses += 1;
-        p.learning = true;
-        p.step = 0;
-        p.i = Math.max(1, p.i * 0.5);
-        p.ef = Math.max(1.3, p.ef - 0.2);
-        p.due = Date.now() + LEARNING_STEPS_MIN[0]*60000;
+      const steps = p.relearn ? RELEARNING_STEPS_MIN : LEARNING_STEPS_MIN;
+      const step = Math.min(p.step, steps.length - 1);
+      // a relearning card graduates back to the (shortened) interval it lapsed to
+      const graduateIvl = p.relearn ? p.i : GRADUATING_IVL;
+      if (grade === 0) {
+        toStep(p, 0, steps[0], now);
       } else if (grade === 1) {
-        p.i = Math.max(1, p.i * 1.2);
-        p.ef = Math.max(1.3, p.ef - 0.15);
-        p.r += 1;
-        p.due = Date.now() + p.i * DAY_MS;
+        let mins = steps[step];
+        if (step === 0) mins = steps.length > 1 ? (steps[0] + steps[1]) / 2 : Math.min(steps[0] * 1.5, steps[0] + 1440);
+        toStep(p, step, mins, now);
       } else if (grade === 2) {
-        p.i = Math.max(1, p.i * p.ef);
-        p.r += 1;
-        p.due = Date.now() + p.i * DAY_MS;
+        if (step + 1 < steps.length) toStep(p, step + 1, steps[step + 1], now);
+        else { p.r += 1; toReview(p, graduateIvl, now); }
       } else {
-        p.i = Math.max(1, p.i * p.ef * 1.3);
-        p.ef = Math.min(2.8, p.ef + 0.15);
         p.r += 1;
-        p.due = Date.now() + p.i * DAY_MS;
+        toReview(p, p.relearn ? graduateIvl + 1 : EASY_IVL, now);
       }
+      return p;
     }
 
+    // ---- review card ----
+    const ivl = p.i;
+    const daysLate = Math.max(0, dayNumber(now) - p.dueDay);
+    if (grade === 0) {
+      p.lapses += 1;
+      p.ef = Math.max(MIN_EASE, p.ef - 0.2);
+      p.i = clampIvl(ivl * LAPSE_IVL_MULT);
+      p.relearn = true;
+      if (p.lapses >= LEECH_LAPSES) p.leech = true;
+      toStep(p, 0, RELEARNING_STEPS_MIN[0], now);
+      return p;
+    }
+    // fuzz each option, then keep Hard < Good < Easy by at least a day
+    const seed = p.r + 1;
+    const hard = clampIvl(fuzzInterval(Math.max(ivl + 1, ivl * HARD_MULT), id, seed));
+    const good = clampIvl(Math.max(hard + 1, fuzzInterval((ivl + daysLate / 2) * p.ef, id, seed)));
+    const easy = clampIvl(Math.max(good + 1, fuzzInterval((ivl + daysLate) * p.ef * EASY_BONUS, id, seed)));
+    let next;
+    if (grade === 1) { next = hard; p.ef = Math.max(MIN_EASE, p.ef - 0.15); }
+    else if (grade === 2) { next = good; }
+    else { next = easy; p.ef += 0.15; }
+    p.r += 1;
+    toReview(p, next, now);
+    return p;
+  }
+
+  function gradeCard(id, grade){
+    const p = scheduleCard(id, grade);
     progress[id] = p;
     saveCardProgress(id);
     return p;
+  }
+
+  // "<1 мин", "6 мин", "3 ч", "4 дн", "2 мес", "1,5 г" — like the labels above Anki's buttons
+  function formatInterval(p, now = Date.now()){
+    if (p.learning) {
+      const mins = Math.max(0, (p.due - now) / 60000);
+      if (mins < 1) return '<1 мин';
+      if (mins < 60) return `${Math.round(mins)} мин`;
+      if (mins < 1440) return `${Math.round(mins / 60)} ч`;
+      return `${Math.round(mins / 1440)} дн`;
+    }
+    const d = p.i;
+    if (d < 30) return `${d} дн`;
+    if (d < 365) return `${(d / 30).toFixed(d < 300 ? 1 : 0).replace('.0','').replace('.',',')} мес`;
+    return `${(d / 365).toFixed(1).replace('.0','').replace('.',',')} г`;
   }
 
   // ---------- Selection filter (chapters / dialogues) ----------
@@ -298,13 +415,29 @@
     return !!fwd && !fwd.learning;
   }
 
-  function dueCards(){
-    const cards = [];
+  // Today's cards, split into Anki's three queues. A word's two directions
+  // are siblings: if both would be reviewed today (or the forward side is
+  // being relearned), the reverse side is buried until tomorrow so one
+  // doesn't give away the answer to the other.
+  function learningKeys(){
+    const keys = [];
     pool(WORDS).forEach(w => {
-      if (isDue(cardKey(w.id,'fwd'))) cards.push({ word:w, dir:'fwd' });
-      if (settings.reverseEnabled && isDue(cardKey(w.id,'rev'))) cards.push({ word:w, dir:'rev' });
+      const f = cardKey(w.id,'fwd'), r = cardKey(w.id,'rev');
+      if (progress[f] && progress[f].learning) keys.push(f);
+      if (settings.reverseEnabled && progress[r] && progress[r].learning) keys.push(r);
     });
-    return cards;
+    return keys;
+  }
+  function dueReviewKeys(now = Date.now()){
+    const keys = [];
+    pool(WORDS).forEach(w => {
+      const f = cardKey(w.id,'fwd'), r = cardKey(w.id,'rev');
+      const pf = progress[f], pr = progress[r];
+      const fwdDue = pf && !pf.learning && pf.due <= now;
+      if (fwdDue) keys.push(f);
+      if (settings.reverseEnabled && pr && !pr.learning && pr.due <= now && !fwdDue && !(pf && pf.learning)) keys.push(r);
+    });
+    return keys;
   }
   function newForwardWords(){
     return pool(WORDS).filter(w => !progress[cardKey(w.id,'fwd')]);
@@ -312,6 +445,18 @@
   function newReverseWords(){
     if (!settings.reverseEnabled) return [];
     return pool(WORDS).filter(w => reverseUnlocked(w) && !progress[cardKey(w.id,'rev')]);
+  }
+  // the daily new-word limit paces *new vocabulary* only. Reverse cards
+  // unlocked from words already learned aren't new vocabulary — they're
+  // available uncapped, alongside everything else.
+  function newKeysForToday(){
+    const quota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
+    return newForwardWords().slice(0, quota).map(w => cardKey(w.id,'fwd'))
+      .concat(newReverseWords().map(w => cardKey(w.id,'rev')));
+  }
+  function learningDueSoon(now = Date.now()){
+    const limit = now + LEARN_AHEAD_MIN * 60000;
+    return learningKeys().filter(k => progress[k].due <= limit);
   }
 
   function selectionSummaryText(){
@@ -330,27 +475,88 @@
     return a;
   }
 
-  function buildSessionQueue(){
-    const due = shuffle(dueCards());
-    // the daily new-word limit paces *new vocabulary* only. Reverse cards
-    // unlocked from words already learned aren't new vocabulary — they
-    // become available immediately, in parallel with everything else,
-    // uncapped, so mastering a word's meaning promptly offers the
-    // production (RU→AR) side too instead of waiting for tomorrow's quota.
-    const remainingQuota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
-    const freshForward = newForwardWords();
-    const freshReverse = newReverseWords();
-    const fresh = [];
-    let quota = remainingQuota;
-    for (const w of freshForward) { if (quota<=0) break; fresh.push({word:w, dir:'fwd'}); quota--; }
-    freshReverse.forEach(w => fresh.push({word:w, dir:'rev'}));
+  // ---------- Session ----------
+  // Like Anki, the next card is chosen live rather than from a fixed list:
+  //  1. a learning card whose step is up ("Забыл" a minute ago -> back now)
+  //  2. otherwise reviews and new words, new ones spread evenly among reviews
+  //  3. when those run out, learning cards due within LEARN_AHEAD_MIN are
+  //     shown early, so the session ends once every word has been learned
+  function startSessionQueues(){
+    return {
+      reviewQ: shuffle(dueReviewKeys()),
+      newQ: newKeysForToday(),
+      newDebt: 0,
+      recent: [],
+      current: null,
+      answered: 0,
+      stats: { new:0, reviewed:0, again:0 },
+      lastAction: null,
+    };
+  }
 
-    const queue = due.map(c => ({ word:c.word, dir:c.dir, isNew:false }));
-    fresh.forEach((c, i) => {
-      const pos = Math.min(queue.length, (i+1)*3 + i);
-      queue.splice(pos, 0, { word:c.word, dir:c.dir, isNew:true });
-    });
-    return queue;
+  function earliest(keys, avoidKey){
+    const sorted = keys.slice().sort((a,b) => progress[a].due - progress[b].due);
+    return sorted.find(k => k !== avoidKey) || sorted[0] || null;
+  }
+
+  function takeReview(){
+    while (session.reviewQ.length) {
+      const k = session.reviewQ.shift();
+      const p = progress[k];
+      if (!p || p.learning || p.due > Date.now()) continue;
+      // sibling lapsed during this session -> bury the reverse side
+      if (k.endsWith('r')) { const pf = progress[k.slice(0,-1)+'f']; if (pf && pf.learning) continue; }
+      return k;
+    }
+    return null;
+  }
+  // keeps a word's two sides apart: a new reverse card waits until a few
+  // other cards have passed since its forward side was answered
+  const SIBLING_GAP = 5;
+  const siblingKey = (k) => k.slice(0,-1) + (k.endsWith('r') ? 'f' : 'r');
+  function takeNew(allowRecentSibling){
+    session.newQ = session.newQ.filter(k => !progress[k]);
+    let i = session.newQ.findIndex(k => !session.recent.includes(siblingKey(k)));
+    if (i < 0 && allowRecentSibling && session.newQ.length) i = 0;
+    return i < 0 ? null : session.newQ.splice(i, 1)[0];
+  }
+
+  function pickNext(avoidKey){
+    const now = Date.now();
+    const learnNow = learningKeys().filter(k => progress[k].due <= now);
+    const l = earliest(learnNow, avoidKey);
+    if (l && (l !== avoidKey || (!session.reviewQ.length && !session.newQ.length))) return { key:l, kind:'learn' };
+
+    // spread new cards evenly among reviews
+    const total = session.reviewQ.length + session.newQ.length;
+    if (total) {
+      const debt = session.newDebt + session.newQ.length / total;
+      const preferNew = debt >= 1 || !session.reviewQ.length;
+      let k = preferNew ? takeNew(false) : takeReview();
+      let kind = preferNew ? 'new' : 'review';
+      if (!k) { k = preferNew ? takeReview() : takeNew(false); kind = preferNew ? 'review' : 'new'; }
+      if (k) {
+        session.newDebt = kind === 'new' ? Math.max(0, debt - 1) : debt;
+        return { key:k, kind };
+      }
+    }
+
+    const ahead = earliest(learningDueSoon(now), avoidKey);
+    if (ahead && ahead !== avoidKey) return { key:ahead, kind:'learn' };
+    // last resort: a reverse card right after its forward side, or the same learning card again
+    const k = takeNew(true);
+    if (k) return { key:k, kind:'new' };
+    return ahead ? { key:ahead, kind:'learn' } : null;
+  }
+
+  function sessionCounts(){
+    // the current card is included in its own count, as in Anki
+    const c = session.current;
+    return {
+      new: session.newQ.filter(k => !progress[k]).length + (c && c.kind === 'new' ? 1 : 0),
+      learn: learningDueSoon().length,
+      review: session.reviewQ.length + (c && c.kind === 'review' ? 1 : 0),
+    };
   }
 
   // ---------- Screens ----------
@@ -383,11 +589,10 @@
 
   // ---------- Render: Home ----------
   function renderHome(){
-    const due = dueCards().length;
-    const remainingQuota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
+    rollDailyMeta();
+    const due = dueReviewKeys().length + learningDueSoon().length;
     const freshForwardCount = newForwardWords().length;
-    const freshReverseCount = newReverseWords().length; // uncapped, always available once unlocked
-    const freshAvailable = Math.min(freshForwardCount, remainingQuota) + freshReverseCount;
+    const freshAvailable = newKeysForToday().length;
     const sessionSize = due + freshAvailable;
 
     document.getElementById('due-count').textContent = sessionSize;
@@ -398,7 +603,13 @@
 
     let label;
     if (sessionSize === 0) {
-      label = freshForwardCount > 0 ? 'дневной лимит новых слов исчерпан' : 'на сегодня всё повторено 🎉';
+      const later = learningKeys();
+      if (later.length) {
+        const mins = Math.max(1, Math.ceil((progress[earliest(later)].due - Date.now()) / 60000));
+        label = `ещё ${later.length} ${pluralWords(later.length)} на изучении — вернутся через ${mins} мин`;
+      } else {
+        label = freshForwardCount > 0 ? 'дневной лимит новых слов исчерпан' : 'на сегодня всё повторено 🎉';
+      }
     }
     else if (due === 0) label = 'новых слов готово к изучению';
     else if (freshAvailable === 0) label = 'слов к повторению сегодня';
@@ -495,12 +706,38 @@
     el.classList.toggle('is-arabic', isArabic);
   }
 
-  function renderCurrentCard(){
-    const item = session.queue[session.idx];
-    const w = item.word;
-    const dir = item.dir;
+  function renderContext(w){
+    const ctxEl = document.getElementById('card-context');
+    if (w.ctx) {
+      const [sentence, start, end] = w.ctx;
+      ctxEl.innerHTML = escapeHtml(sentence.slice(0,start)) + '<mark>' + escapeHtml(sentence.slice(start,end)) + '</mark>' + escapeHtml(sentence.slice(end));
+      ctxEl.classList.remove('hidden');
+    } else {
+      ctxEl.innerHTML = '';
+      ctxEl.classList.add('hidden');
+    }
+  }
 
-    document.getElementById('card-vol-kicker').textContent = `Том ${w.vol===2?'II':'I'} · Глава ${w.ch}`;
+  function renderStudyTopbar(){
+    const c = sessionCounts();
+    const kind = session.current && session.current.kind;
+    [['new','count-new'], ['learn','count-learn'], ['review','count-review']].forEach(([k, id]) => {
+      const el = document.getElementById(id);
+      el.textContent = c[k];
+      el.classList.toggle('active', kind === k);
+    });
+    const remaining = c.new + c.learn + c.review;
+    document.getElementById('study-progress-fill').style.width =
+      Math.round(100 * session.answered / Math.max(1, session.answered + remaining)) + '%';
+  }
+
+  function renderCurrentCard(){
+    const { key } = session.current;
+    const { word:w, dir } = parseCardKey(key);
+    const p = progress[key];
+
+    document.getElementById('card-vol-kicker').textContent =
+      `Том ${w.vol===2?'II':'I'} · Глава ${w.ch}` + (p && p.leech ? ' · трудное слово' : '');
 
     const frontText = dir === 'rev' ? w.ru : w.ar;
     const answerText = dir === 'rev' ? w.ar : w.ru;
@@ -512,82 +749,82 @@
     document.getElementById('tap-hint').textContent =
       dir === 'rev' ? 'Нажмите, чтобы увидеть слово на арабском' : 'Нажмите, чтобы посмотреть перевод';
 
-    const ctxEl = document.getElementById('card-context');
-    if (w.ctx) {
-      const [sentence, start, end] = w.ctx;
-      ctxEl.innerHTML = escapeHtml(sentence.slice(0,start)) + '<mark>' + escapeHtml(sentence.slice(start,end)) + '</mark>' + escapeHtml(sentence.slice(end));
-      ctxEl.classList.remove('hidden');
-    } else {
-      ctxEl.innerHTML = '';
-      ctxEl.classList.add('hidden');
-    }
+    renderContext(w);
 
     document.getElementById('card-back').classList.add('hidden');
     document.querySelector('.card-front').classList.remove('hidden');
     document.getElementById('grade-row').classList.add('hidden');
 
-    document.getElementById('study-idx').textContent = session.idx + 1;
-    document.getElementById('study-total').textContent = session.queue.length;
-    document.getElementById('study-progress-fill').style.width =
-      Math.round(100 * session.idx / session.queue.length) + '%';
+    renderStudyTopbar();
   }
 
   function flipCard(){
+    if (!document.getElementById('card-back').classList.contains('hidden')) return;
+    // show on each button when the word will come back, as Anki does
+    const now = Date.now();
+    document.querySelectorAll('.grade-btn').forEach(btn => {
+      const next = scheduleCard(session.current.key, parseInt(btn.dataset.grade,10), now);
+      btn.querySelector('.grade-ivl').textContent = formatInterval(next, now);
+    });
     document.querySelector('.card-front').classList.add('hidden');
     document.getElementById('card-back').classList.remove('hidden');
     document.getElementById('grade-row').classList.remove('hidden');
     haptic('light');
   }
 
+  function bumpStreak(){
+    const t = todayStr();
+    if (streak.lastDate === t) return;
+    streak.count = (streak.lastDate === dayKey(today() - 1)) ? (streak.count||0) + 1 : 1;
+    streak.lastDate = t;
+    saveStreak();
+  }
+
   async function onGrade(grade){
-    const item = session.queue[session.idx];
-    const w = item.word;
-    const dir = item.dir;
-    const key = cardKey(w.id, dir);
-    const wasNew = item.isNew;
-    const introducedNew = wasNew && !progress[key];
+    const { key } = session.current;
+    const { word:w, dir } = parseCardKey(key);
+    const wasNew = !progress[key];
     // only forward cards count against the daily new-word pace — reverse
     // cards are practice on already-learned words, not new vocabulary
-    const countsAgainstQuota = introducedNew && dir === 'fwd';
+    const countsAgainstQuota = wasNew && dir === 'fwd';
 
     // snapshot everything needed to fully undo this grade
-    const prevProgress = progress[key] ? JSON.parse(JSON.stringify(progress[key])) : null;
-    const idxBefore = session.idx;
-    const statsBefore = Object.assign({}, session.stats);
-    const queueLenBefore = session.queue.length;
+    session.lastAction = {
+      cardKey: key,
+      prevProgress: progress[key] ? JSON.parse(JSON.stringify(progress[key])) : null,
+      countsAgainstQuota,
+      prevStreak: Object.assign({}, streak),
+      session: JSON.stringify({
+        reviewQ: session.reviewQ, newQ: session.newQ, newDebt: session.newDebt, recent: session.recent,
+        current: session.current, answered: session.answered, stats: session.stats,
+      }),
+    };
 
     if (countsAgainstQuota) {
       dailyMeta.introduced += 1;
       saveDaily();
     }
 
+    const before = progress[key];
     const result = gradeCard(key, grade);
+    session.answered += 1;
+    session.recent = session.recent.concat(key).slice(-SIBLING_GAP);
     session.stats.reviewed += 1;
     if (wasNew) session.stats.new += 1;
     if (grade === 0) { session.stats.again += 1; haptic('warning'); }
     else haptic('success');
+    bumpStreak();
 
-    // if the card is due again soon (still in a short learning step), resurface it
-    // later in THIS session — how far ahead scales with how soon it's due, so a
-    // "Hard" card comes back sooner than a "Good" card, matching the interval growth
-    let requeued = false;
-    const minutesAway = (result.due - Date.now()) / 60000;
-    if (minutesAway < 30) {
-      const offset = Math.min(20, Math.max(3, Math.round(minutesAway * 1.3)));
-      const insertPos = Math.min(session.queue.length, session.idx + offset);
-      session.queue.splice(insertPos, 0, { word:w, dir, isNew:false });
-      requeued = true;
+    // the forward side just graduated -> its reverse card becomes available
+    const graduated = dir === 'fwd' && (!before || before.learning) && !result.learning;
+    const revKey = cardKey(w.id, 'rev');
+    if (graduated && settings.reverseEnabled && !progress[revKey] && !session.newQ.includes(revKey)) {
+      session.newQ.push(revKey);
     }
 
-    session.lastAction = {
-      cardKey: key, prevProgress, countsAgainstQuota,
-      idxBefore, statsBefore, queueLenBefore,
-      queueLenAfter: session.queue.length, requeued,
-    };
     updateUndoButton();
-
-    session.idx += 1;
-    if (session.idx >= session.queue.length) await finishSession();
+    session.current = pickNext(key);
+    if (!session.current) await finishSession();
     else renderCurrentCard();
   }
 
@@ -607,35 +844,23 @@
       dailyMeta.introduced = Math.max(0, dailyMeta.introduced - 1);
       saveDaily();
     }
+    streak = action.prevStreak;
+    saveStreak();
 
-    if (action.requeued) {
-      for (let i = session.queue.length - 1; i > action.idxBefore; i--) {
-        const item = session.queue[i];
-        if (cardKey(item.word.id, item.dir) === action.cardKey) { session.queue.splice(i,1); break; }
-      }
-    }
-
-    session.stats = action.statsBefore;
-    session.idx = action.idxBefore;
+    Object.assign(session, JSON.parse(action.session));
     session.lastAction = null;
     updateUndoButton();
+    showScreen('study');
     renderCurrentCard();
     haptic('light');
   }
 
   function updateUndoButton(){
-    document.getElementById('btn-undo').classList.toggle('hidden', !(session && session.lastAction));
+    const show = !!(session && session.lastAction);
+    document.querySelectorAll('.js-undo').forEach(b => b.classList.toggle('hidden', !show));
   }
 
   async function finishSession(){
-    const today = todayStr();
-    if (streak.lastDate !== today) {
-      const yesterday = new Date(Date.now() - DAY_MS).toISOString().slice(0,10);
-      streak.count = (streak.lastDate === yesterday) ? (streak.count||0) + 1 : 1;
-      streak.lastDate = today;
-      await saveStreak();
-    }
-
     document.getElementById('done-sub').textContent =
       `Вы повторили ${session.stats.reviewed} ${pluralWords(session.stats.reviewed)}`;
     document.getElementById('done-new').textContent = session.stats.new;
@@ -646,9 +871,10 @@
   }
 
   function startSession(){
-    const queue = buildSessionQueue();
-    if (queue.length === 0) { renderHome(); return; }
-    session = { queue, idx:0, stats:{ new:0, reviewed:0, again:0 }, lastAction:null };
+    rollDailyMeta();
+    session = startSessionQueues();
+    session.current = pickNext(null);
+    if (!session.current) { renderHome(); return; }
     showScreen('study');
     renderCurrentCard();
     updateUndoButton();
@@ -698,7 +924,7 @@
   document.getElementById('btn-stats').addEventListener('click', () => { renderStats(); showScreen('stats'); });
   document.getElementById('btn-done-home').addEventListener('click', goHome);
   document.getElementById('flashcard').addEventListener('click', flipCard);
-  document.getElementById('btn-undo').addEventListener('click', (e) => { e.stopPropagation(); undoLastGrade(); });
+  document.querySelectorAll('.js-undo').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); undoLastGrade(); }));
 
   document.getElementById('btn-sections').addEventListener('click', () => { renderChaptersScreen(); showScreen('chapters'); });
   document.getElementById('btn-all-chapters').addEventListener('click', () => {

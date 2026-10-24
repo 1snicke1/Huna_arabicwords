@@ -282,9 +282,16 @@ body::before{
   transition:width .3s ease;
 }
 .study-count{
-  font-size:13px; font-weight:700; color:rgba(255,255,255,.55);
+  display:flex; gap:8px;
+  font-size:13px; font-weight:700;
   white-space:nowrap;
 }
+/* Anki's new / learning / review counters; the current card's queue is underlined */
+.study-count span{ opacity:.75; padding-bottom:1px; border-bottom:2px solid transparent; }
+.study-count span.active{ opacity:1; border-bottom-color:currentColor; }
+.count-new{ color:#6fb8ff; }
+.count-learn{ color:#ff8f6b; }
+.count-review{ color:#3fcb9e; }
 .undo-btn{
   width:30px; height:30px;
   border-radius:50%;
@@ -398,6 +405,8 @@ body::before{
   cursor:pointer;
 }
 .grade-btn:active{ transform:scale(.96); }
+.grade-label{ display:block; }
+.grade-ivl{ display:block; margin-top:3px; font-size:11px; font-weight:600; opacity:.85; }
 .grade-again{ background:linear-gradient(135deg,#B4392E,#E8703A); }
 .grade-hard{ background:linear-gradient(135deg,#A6740A,#D9A83D); }
 .grade-good{ background:linear-gradient(135deg,#1C8F6E,#3FCB9E); }
