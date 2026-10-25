@@ -94,6 +94,37 @@ body::before{
 .brand-sub{ font-size:11.5px; color:rgba(255,255,255,.55); margin-top:1px; }
 
 /* ---------- Home hero ---------- */
+/* book switcher on the home screen */
+.book-tabs{
+  display:grid; grid-template-columns:1fr 1fr; gap:6px;
+  padding:4px;
+  border-radius:16px;
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.09);
+  margin-bottom:18px;
+}
+.book-tab{
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  min-width:0;
+  padding:9px 6px;
+  border:none; border-radius:12px;
+  background:transparent;
+  color:rgba(255,255,255,.6);
+  font-family:var(--font-ui);
+  cursor:pointer;
+  transition:background .15s ease, color .15s ease;
+}
+.book-tab.active{
+  background:linear-gradient(135deg, var(--teal-dark), var(--teal));
+  color:#fff;
+  box-shadow:0 4px 14px rgba(0,0,0,.25);
+}
+.book-tab-name{ font-size:13.5px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+.book-tab-name.is-arabic{ font-family:var(--font-ar); font-size:15px; font-weight:700; line-height:1.3; }
+.book-tab-sub{ font-size:11px; font-weight:600; opacity:.8; }
+.book-tab-sub b{ color:var(--orange); font-weight:800; }
+.book-tab.active .book-tab-sub b{ color:#ffd2ad; }
+
 .hero-stat{
   text-align:center;
   margin:8px 0 22px;
@@ -382,6 +413,14 @@ body::before{
   text-align:center;
   direction:rtl;
 }
+.dialogue-row-ar{ font-family:var(--font-ar); font-size:14px; }
+.card-context-tr{
+  margin-top:8px;
+  font-size:13.5px;
+  line-height:1.45;
+  color:rgba(255,255,255,.55);
+  text-align:center;
+}
 .card-context mark{
   background:none;
   color:var(--teal-bright);
@@ -433,6 +472,8 @@ body::before{
 
 /* ---------- Stats screen ---------- */
 .stats-title{ font-size:22px; font-weight:800; margin-bottom:20px; }
+.stats-book{ font-size:13px; font-weight:700; color:var(--teal-bright); margin:-14px 0 18px; }
+.stats-book:empty{ display:none; }
 .stats-subtitle{ font-size:12px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--teal-bright); margin:0 0 8px 4px; }
 .stats-block{
   background:rgba(255,255,255,.05);

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Noto+Naskh+Arabic:wght@500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -25,6 +25,8 @@
         <div class="brand-sub">Академия арабского языка</div>
       </div>
     </header>
+
+    <div class="book-tabs" id="book-tabs" role="tablist" aria-label="Учебник"></div>
 
     <div class="hero-stat">
       <div class="hero-number" id="due-count">0</div>
@@ -66,9 +68,10 @@
   <section id="screen-chapters" class="screen hidden">
     <button class="back-btn back-btn-inpage hidden" data-back><svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <div class="stats-title">Разделы</div>
+    <div class="stats-book" id="chapters-book"></div>
 
     <button class="all-chapters-row" id="btn-all-chapters">
-      <span>Все главы и диалоги</span>
+      <span id="all-chapters-label">Все главы и диалоги</span>
       <span class="check-circle" id="check-all"></span>
     </button>
 
@@ -102,6 +105,7 @@
           <div class="card-divider"></div>
           <div class="card-answer" id="card-back-answer"></div>
           <div class="card-context hidden" id="card-context"></div>
+          <div class="card-context-tr hidden" id="card-context-tr"></div>
         </div>
       </div>
     </div>
@@ -151,6 +155,7 @@
   <section id="screen-stats" class="screen hidden">
     <button class="back-btn back-btn-inpage hidden" data-back><svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <div class="stats-title">Статистика</div>
+    <div class="stats-book" id="stats-book"></div>
 
     <div class="stats-subtitle">Арабский → Русский</div>
     <div class="stats-block">
@@ -169,10 +174,7 @@
       <div class="stats-row"><span>Освоено</span><span id="s-rev-mastered">0</span></div>
     </div>
 
-    <div class="stats-block">
-      <div class="stats-row"><span>Том I</span><span id="s-vol1">0 / 386</span></div>
-      <div class="stats-row"><span>Том II</span><span id="s-vol2">0 / 385</span></div>
-    </div>
+    <div class="stats-block" id="s-vols"></div>
 
     <div class="settings-row">
       <label for="toggle-reverse">Обратное направление (RU → AR)</label>
@@ -196,7 +198,8 @@
 
 </div>
 
-<script src="words-data.js?v=2"></script>
-<script src="app.js?v=2"></script>
+<script src="words-data.js?v=3"></script>
+<script src="words-bayna2.js?v=3"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

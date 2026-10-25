@@ -1,8 +1,11 @@
 /* ============================================================
    Huna Arabic flashcards — app logic
-   WORDS_DATA:   [ [id, vol, chapter, dialogue|null, arabic, russian], ... ]
-   CHAPTERS_DATA:[ [vol, [ [chapter, title, wordCount, [[dialogue,count],...]], ... ]], ... ]
-   both provided by words-data.js
+   Each book provides words and chapters in the same shape:
+   words:    [ [id, vol, chapter, dialogue|null, arabic, russian, ctx|null], ... ]
+             ctx = [sentence, highlightStart, highlightEnd, translation?]
+   chapters: [ [vol, [ [chapter, title, wordCount, [[dialogue,count,title?],...]], ... ]], ... ]
+   Huna Arabic: WORDS_DATA / CHAPTERS_DATA (words-data.js, vols 1–2, ids 1–9999)
+   Al-Arabiya Bayna Yadayk 2: BAYNA2_WORDS / BAYNA2_CHAPTERS (words-bayna2.js, vol 3, ids 10001+)
    ============================================================ */
 
 (function(){
@@ -56,7 +59,7 @@
         if (this.useCloud) {
           tg.CloudStorage.setItem(key, value, (err) => {
             if (err) console.warn('CloudStorage.setItem failed, kept local copy:', key, err);
-            resolve(true);
+            resolve(!err);
           });
         } else {
           resolve(true);
@@ -121,16 +124,32 @@
     },
     clearAll(){
       return this.getKeys().then(keys => {
-        const relevant = keys.filter(k => k.startsWith('p_') || k === 'daily' || k === 'streak' || k === 'settings');
+        const relevant = keys.filter(k => k.startsWith('p_') || k.startsWith('pb_') || k === 'daily' || k === 'streak' || k === 'settings');
         return Promise.all(relevant.map(k => this.removeItem(k)));
       });
     }
   };
 
   // ---------- Word & chapter data ----------
-  const WORDS = WORDS_DATA.map(w => ({ id:w[0], vol:w[1], ch:w[2], dlg:w[3], ar:w[4], ru:w[5], ctx:w[6]||null }));
-  const TOTAL_VOL1 = WORDS.filter(w=>w.vol===1).length;
-  const TOTAL_VOL2 = WORDS.filter(w=>w.vol===2).length;
+  // Vol numbers are unique across books, so (vol, chapter, dialogue) still
+  // identifies a section. Word ids are unique too (they are progress keys).
+  const BOOKS = [
+    { id:'huna', name:'Huna Arabic', sub:'Тома I–II', short:'Huna Arabic',
+      words: WORDS_DATA, chapters: CHAPTERS_DATA, vols: { 1:'Том I', 2:'Том II' },
+      chapterLabel: (ch, title) => `Глава ${ch}. ${title}`, chapterShort: (ch) => `Глава ${ch}`,
+      lessonLabel: (n) => `Диалог ${n}`, allLabel: 'Все главы и диалоги', allShort: 'Все главы' },
+    { id:'bayna2', name:'العربية بين يديك', sub:'Том 2', short:'Бэйна ядайк 2',
+      words: BAYNA2_WORDS, chapters: BAYNA2_CHAPTERS, vols: { 3:'Том 2' },
+      // the 17th section is the book's supplementary reading texts
+      chapterLabel: (ch, title) => ch === 17 ? title : `Раздел ${ch}. ${title}`,
+      chapterShort: (ch) => ch === 17 ? 'Доп. тексты' : `Раздел ${ch}`,
+      lessonLabel: (n) => `Урок ${n}`, allLabel: 'Все разделы и уроки', allShort: 'Все разделы' },
+  ];
+  const BOOK_BY_ID = new Map(BOOKS.map(b => [b.id, b]));
+  const WORDS = [];
+  BOOKS.forEach(b => b.words.forEach(w =>
+    WORDS.push({ id:w[0], vol:w[1], ch:w[2], dlg:w[3], ar:w[4], ru:w[5], ctx:w[6]||null, book:b.id })));
+  const ALL_CHAPTERS = BOOKS.flatMap(b => b.chapters);
 
   // A learnable unit is a (word, direction) pair — "fwd" = Arabic shown, Russian
   // recalled (as before); "rev" = Russian shown, Arabic recalled. Each has its
@@ -138,7 +157,7 @@
   function cardKey(wordId, dir){ return dir === 'rev' ? `${wordId}r` : `${wordId}f`; }
 
   function findChapterEntry(vol, ch){
-    const volEntry = CHAPTERS_DATA.find(e => e[0] === vol);
+    const volEntry = ALL_CHAPTERS.find(e => e[0] === vol);
     if (!volEntry) return null;
     return volEntry[1].find(e => e[0] === ch) || null;
   }
@@ -184,40 +203,101 @@
   //   step, r(eps after graduating), i(nterval days), ef, due(ms), dueDay (review cards),
   //   lapses, leech }
   let progress = {};
-  let settings = { dailyLimit: 15, selection: [], reverseEnabled: true }; // selection: [{vol,ch,dlg|null}]
-  let dailyMeta = { date: todayStr(), introduced: 0 };
+  const defaultSettings = () => ({ dailyLimit: 15, selections: {}, reverseEnabled: true, activeBook: 'huna' });
+  let settings = defaultSettings(); // selections: { [bookId]: [{vol,ch,dlg|null}] }
+  let dailyMeta = { date: todayStr(), introduced: {} }; // introduced: { [bookId]: n }
   let streak = { lastDate: null, count: 0 };
 
   let session = null; // see startSessionQueues()
 
+  const activeBook = () => BOOK_BY_ID.get(settings.activeBook) || BOOKS[0];
+  function selection(){
+    const id = activeBook().id;
+    if (!Array.isArray(settings.selections[id])) settings.selections[id] = [];
+    return settings.selections[id];
+  }
+  const introducedToday = (bookId) => dailyMeta.introduced[bookId] || 0;
+
+  // ---------- Progress buckets ----------
+  // Telegram CloudStorage keeps at most 1024 keys per user, far fewer than
+  // there are cards (2 per word), so cards are packed 25 words per key:
+  // pb_<floor(id/25)> = { "12f": [flags, step, reps, ivl, ease×100, due, lapses], ... }
+  // where due is the due day for review cards and a timestamp for learning ones.
+  const BUCKET_WORDS = 25;
+  const bucketOf = (key) => 'pb_' + Math.floor(parseInt(key, 10) / BUCKET_WORDS);
+  function packCard(p){
+    const flags = (p.learning ? 1 : 0) | (p.relearn ? 2 : 0) | (p.leech ? 4 : 0);
+    return [flags, p.step || 0, p.r || 0, p.i || 0, Math.round(p.ef * 100), p.learning ? p.due : p.dueDay, p.lapses || 0];
+  }
+  function unpackCard(a){
+    const [flags, step, r, i, ef, due, lapses] = a;
+    const p = { learning: !!(flags & 1), relearn: !!(flags & 2), step, r, i, ef: ef / 100, lapses };
+    if (flags & 4) p.leech = true;
+    if (p.learning) p.due = due;
+    else { p.dueDay = due; p.due = dayStartMs(due); }
+    return p;
+  }
+  function saveBucket(bucket){
+    const n = parseInt(bucket.slice(3), 10);
+    const out = {};
+    for (const k in progress) if (Math.floor(parseInt(k, 10) / BUCKET_WORDS) === n) out[k] = packCard(progress[k]);
+    return Object.keys(out).length ? Storage.setItem(bucket, JSON.stringify(out)) : Storage.removeItem(bucket);
+  }
+
   // ---------- Load / persist ----------
   async function loadAll(){
     const keys = await Storage.getKeys();
-    const progKeys = keys.filter(k => k.startsWith('p_'));
+    const bucketKeys = keys.filter(k => k.startsWith('pb_'));
+    const legacyKeys = keys.filter(k => k.startsWith('p_'));
     const misc = await Storage.getItems(['daily','streak','settings']);
-    const progVals = await Storage.getItems(progKeys);
 
     progress = {};
-    for (const k in progVals) {
-      try { progress[k.slice(2)] = migrateCard(JSON.parse(progVals[k])); } catch(e){}
+    const bucketVals = await Storage.getItems(bucketKeys);
+    for (const b in bucketVals) {
+      try {
+        const cards = JSON.parse(bucketVals[b]);
+        for (const k in cards) progress[k] = unpackCard(cards[k]);
+      } catch(e){}
     }
+    // older versions stored one key per card (p_<card>): fold them into buckets
+    if (legacyKeys.length) {
+      const legacyVals = await Storage.getItems(legacyKeys);
+      const touched = new Set();
+      for (const k in legacyVals) {
+        const card = k.slice(2);
+        if (progress[card]) continue;
+        try { progress[card] = migrateCard(JSON.parse(legacyVals[k])); touched.add(bucketOf(card)); } catch(e){}
+      }
+      const saved = await Promise.all([...touched].map(saveBucket));
+      // drop the old keys only once every bucket is safely stored, freeing cloud slots
+      if (saved.every(Boolean)) await Promise.all(legacyKeys.map(k => Storage.removeItem(k)));
+    }
+
     if (misc.daily) { try { dailyMeta = JSON.parse(misc.daily); } catch(e){} }
+    if (typeof dailyMeta.introduced !== 'object' || dailyMeta.introduced === null) {
+      dailyMeta.introduced = { huna: Number(dailyMeta.introduced) || 0 };
+    }
     if (misc.streak) { try { streak = JSON.parse(misc.streak); } catch(e){} }
     if (misc.settings) {
       try {
         const parsed = JSON.parse(misc.settings);
-        settings = Object.assign({ dailyLimit:15, selection:[], reverseEnabled:true }, parsed);
-        if (!Array.isArray(settings.selection)) settings.selection = [];
+        settings = Object.assign(defaultSettings(), parsed);
+        if (typeof settings.selections !== 'object' || settings.selections === null) settings.selections = {};
+        // before books existed there was a single selection, always Huna Arabic
+        if (Array.isArray(parsed.selection)) {
+          if (!settings.selections.huna) settings.selections.huna = parsed.selection;
+          delete settings.selection;
+        }
       } catch(e){}
     }
     rollDailyMeta();
   }
   // the app may stay open across the 4:00 day boundary
   function rollDailyMeta(){
-    if (dailyMeta.date !== todayStr()) dailyMeta = { date: todayStr(), introduced: 0 };
+    if (dailyMeta.date !== todayStr()) dailyMeta = { date: todayStr(), introduced: {} };
   }
 
-  function saveCardProgress(key){ return Storage.setItem('p_'+key, JSON.stringify(progress[key])); }
+  function saveCardProgress(key){ return saveBucket(bucketOf(key)); }
   function saveDaily(){ return Storage.setItem('daily', JSON.stringify(dailyMeta)); }
   function saveStreak(){ return Storage.setItem('streak', JSON.stringify(streak)); }
   function saveSettings(){ return Storage.setItem('settings', JSON.stringify(settings)); }
@@ -398,14 +478,23 @@
 
   // ---------- Selection filter (chapters / dialogues) ----------
   function matchesSelection(w){
-    if (settings.selection.length === 0) return true;
-    return settings.selection.some(sel => {
-      if (sel.vol !== w.vol || sel.ch !== w.ch) return false;
-      if (sel.dlg == null) return true;
-      return sel.dlg === w.dlg;
+    if (w.book !== activeBook().id) return false;
+    const sel = selection();
+    if (sel.length === 0) return true;
+    return sel.some(s => {
+      if (s.vol !== w.vol || s.ch !== w.ch) return false;
+      if (s.dlg == null) return true;
+      return s.dlg === w.dlg;
     });
   }
   function pool(list){ return list.filter(matchesSelection); }
+  const bookWords = (bookId) => WORDS.filter(w => w.book === bookId);
+
+  function kickerText(w){
+    const book = BOOK_BY_ID.get(w.book);
+    const vol = Object.keys(book.vols).length > 1 ? ` · ${book.vols[w.vol]}` : '';
+    return `${book.short}${vol} · ${book.chapterShort(w.ch)}`;
+  }
 
   // A reverse ("rev") card only becomes available once its forward
   // counterpart has graduated out of learning — recognizing a word reliably
@@ -450,7 +539,7 @@
   // unlocked from words already learned aren't new vocabulary — they're
   // available uncapped, alongside everything else.
   function newKeysForToday(){
-    const quota = Math.max(0, settings.dailyLimit - dailyMeta.introduced);
+    const quota = Math.max(0, settings.dailyLimit - introducedToday(activeBook().id));
     return newForwardWords().slice(0, quota).map(w => cardKey(w.id,'fwd'))
       .concat(newReverseWords().map(w => cardKey(w.id,'rev')));
   }
@@ -460,13 +549,14 @@
   }
 
   function selectionSummaryText(){
-    if (settings.selection.length === 0) return 'Все главы';
-    if (settings.selection.length === 1) {
-      const s = settings.selection[0];
-      if (s.dlg == null) return `Глава ${s.ch}: ${chapterTitle(s.vol, s.ch)}`;
-      return `Глава ${s.ch}, Диалог ${s.dlg}`;
+    const book = activeBook(), sel = selection();
+    if (sel.length === 0) return book.allShort;
+    if (sel.length === 1) {
+      const s = sel[0];
+      if (s.dlg == null) return book.chapterLabel(s.ch, chapterTitle(s.vol, s.ch));
+      return `${book.chapterShort(s.ch)}, ${book.lessonLabel(s.dlg)}`;
     }
-    return `${settings.selection.length} ${pluralRu(settings.selection.length,'раздел','раздела','разделов')} выбрано`;
+    return `${sel.length} ${pluralRu(sel.length,'раздел','раздела','разделов')} выбрано`;
   }
 
   function shuffle(arr){
@@ -618,23 +708,58 @@
     document.getElementById('btn-start').classList.toggle('hidden', sessionSize === 0);
 
     document.getElementById('section-summary').textContent = selectionSummaryText();
+    renderBookTabs();
+  }
+
+  // one tab per book; the badge shows how many cards that book has for today
+  function bookSessionSize(bookId){
+    const prev = settings.activeBook;
+    settings.activeBook = bookId;
+    const n = dueReviewKeys().length + learningDueSoon().length + newKeysForToday().length;
+    settings.activeBook = prev;
+    return n;
+  }
+  function renderBookTabs(){
+    const wrap = document.getElementById('book-tabs');
+    wrap.innerHTML = '';
+    BOOKS.forEach(b => {
+      const btn = document.createElement('button');
+      btn.className = 'book-tab' + (b.id === activeBook().id ? ' active' : '');
+      const n = bookSessionSize(b.id);
+      btn.innerHTML =
+        `<span class="book-tab-name${/[؀-ۿ]/.test(b.name) ? ' is-arabic' : ''}">${escapeHtml(b.name)}</span>` +
+        `<span class="book-tab-sub">${escapeHtml(b.sub)}${n ? ` · <b>${n}</b>` : ''}</span>`;
+      btn.addEventListener('click', () => {
+        if (b.id === activeBook().id) return;
+        settings.activeBook = b.id;
+        saveSettings();
+        haptic('light');
+        renderHome();
+      });
+      wrap.appendChild(btn);
+    });
   }
 
   // ---------- Render: Chapters / sections screen ----------
   function renderChaptersScreen(){
-    document.getElementById('check-all').classList.toggle('checked', settings.selection.length === 0);
+    const book = activeBook(), sel = selection();
+    document.getElementById('check-all').classList.toggle('checked', sel.length === 0);
+    document.getElementById('all-chapters-label').textContent = book.allLabel;
+    document.getElementById('chapters-book').textContent = `${book.name} · ${book.sub}`;
 
     const container = document.getElementById('chapters-list');
     container.innerHTML = '';
 
-    CHAPTERS_DATA.forEach(([vol, chapters]) => {
-      const label = document.createElement('div');
-      label.className = 'vol-group-label';
-      label.textContent = vol === 1 ? 'Том I' : 'Том II';
-      container.appendChild(label);
+    book.chapters.forEach(([vol, chapters]) => {
+      if (book.chapters.length > 1) {
+        const label = document.createElement('div');
+        label.className = 'vol-group-label';
+        label.textContent = book.vols[vol];
+        container.appendChild(label);
+      }
 
       chapters.forEach(([ch, title, count, dialogues]) => {
-        const chapterSelected = settings.selection.some(s => s.vol===vol && s.ch===ch && s.dlg==null);
+        const chapterSelected = sel.some(s => s.vol===vol && s.ch===ch && s.dlg==null);
 
         const block = document.createElement('div');
         block.className = 'chapter-block';
@@ -644,19 +769,20 @@
         row.innerHTML =
           `<span class="check-circle check-square${chapterSelected?' checked':''}"></span>` +
           `<div class="chapter-row-text">` +
-            `<div class="chapter-row-title">Глава ${ch}. ${title}</div>` +
+            `<div class="chapter-row-title">${escapeHtml(book.chapterLabel(ch, title))}</div>` +
             `<div class="chapter-row-count">${count} ${pluralWords(count)}</div>` +
           `</div>`;
         row.addEventListener('click', () => toggleChapter(vol, ch));
         block.appendChild(row);
 
-        dialogues.forEach(([dlg, dcount]) => {
-          const dSelected = chapterSelected || settings.selection.some(s => s.vol===vol && s.ch===ch && s.dlg===dlg);
+        dialogues.forEach(([dlg, dcount, dtitle]) => {
+          const dSelected = chapterSelected || sel.some(s => s.vol===vol && s.ch===ch && s.dlg===dlg);
           const dRow = document.createElement('div');
           dRow.className = 'dialogue-row';
           dRow.innerHTML =
             `<span class="check-circle${dSelected?' checked':''}"></span>` +
-            `<span class="dialogue-row-text">Диалог ${dlg}</span>` +
+            `<span class="dialogue-row-text">${escapeHtml(book.lessonLabel(dlg))}` +
+              (dtitle ? ` · <bdi class="dialogue-row-ar" dir="rtl">${escapeHtml(dtitle)}</bdi>` : '') + `</span>` +
             `<span class="dialogue-row-count">${dcount}</span>`;
           dRow.addEventListener('click', (e) => { e.stopPropagation(); toggleDialogue(vol, ch, dlg); });
           block.appendChild(dRow);
@@ -668,12 +794,13 @@
   }
 
   function toggleChapter(vol, ch){
-    const idx = settings.selection.findIndex(s => s.vol===vol && s.ch===ch && s.dlg==null);
+    const id = activeBook().id, sel = selection();
+    const idx = sel.findIndex(s => s.vol===vol && s.ch===ch && s.dlg==null);
     if (idx >= 0) {
-      settings.selection.splice(idx,1);
+      sel.splice(idx,1);
     } else {
-      settings.selection = settings.selection.filter(s => !(s.vol===vol && s.ch===ch));
-      settings.selection.push({ vol, ch, dlg:null });
+      settings.selections[id] = sel.filter(s => !(s.vol===vol && s.ch===ch));
+      settings.selections[id].push({ vol, ch, dlg:null });
     }
     saveSettings();
     renderChaptersScreen();
@@ -681,16 +808,17 @@
   }
 
   function toggleDialogue(vol, ch, dlg){
-    const chapterIdx = settings.selection.findIndex(s => s.vol===vol && s.ch===ch && s.dlg==null);
+    const sel = selection();
+    const chapterIdx = sel.findIndex(s => s.vol===vol && s.ch===ch && s.dlg==null);
     if (chapterIdx >= 0) {
       // whole chapter was selected — split into individual dialogues, minus the one just unchecked
-      settings.selection.splice(chapterIdx,1);
+      sel.splice(chapterIdx,1);
       const entry = findChapterEntry(vol, ch);
-      if (entry) entry[3].forEach(([d]) => { if (d !== dlg) settings.selection.push({ vol, ch, dlg:d }); });
+      if (entry) entry[3].forEach(([d]) => { if (d !== dlg) sel.push({ vol, ch, dlg:d }); });
     } else {
-      const idx = settings.selection.findIndex(s => s.vol===vol && s.ch===ch && s.dlg===dlg);
-      if (idx >= 0) settings.selection.splice(idx,1);
-      else settings.selection.push({ vol, ch, dlg });
+      const idx = sel.findIndex(s => s.vol===vol && s.ch===ch && s.dlg===dlg);
+      if (idx >= 0) sel.splice(idx,1);
+      else sel.push({ vol, ch, dlg });
     }
     saveSettings();
     renderChaptersScreen();
@@ -708,13 +836,18 @@
 
   function renderContext(w){
     const ctxEl = document.getElementById('card-context');
+    const trEl = document.getElementById('card-context-tr');
     if (w.ctx) {
-      const [sentence, start, end] = w.ctx;
+      const [sentence, start, end, translation] = w.ctx;
       ctxEl.innerHTML = escapeHtml(sentence.slice(0,start)) + '<mark>' + escapeHtml(sentence.slice(start,end)) + '</mark>' + escapeHtml(sentence.slice(end));
       ctxEl.classList.remove('hidden');
+      trEl.textContent = translation || '';
+      trEl.classList.toggle('hidden', !translation);
     } else {
       ctxEl.innerHTML = '';
       ctxEl.classList.add('hidden');
+      trEl.textContent = '';
+      trEl.classList.add('hidden');
     }
   }
 
@@ -737,7 +870,7 @@
     const p = progress[key];
 
     document.getElementById('card-vol-kicker').textContent =
-      `Том ${w.vol===2?'II':'I'} · Глава ${w.ch}` + (p && p.leech ? ' · трудное слово' : '');
+      kickerText(w) + (p && p.leech ? ' · трудное слово' : '');
 
     const frontText = dir === 'rev' ? w.ru : w.ar;
     const answerText = dir === 'rev' ? w.ar : w.ru;
@@ -786,7 +919,7 @@
     const wasNew = !progress[key];
     // only forward cards count against the daily new-word pace — reverse
     // cards are practice on already-learned words, not new vocabulary
-    const countsAgainstQuota = wasNew && dir === 'fwd';
+    const countsAgainstQuota = wasNew && dir === 'fwd' ? w.book : null;
 
     // snapshot everything needed to fully undo this grade
     session.lastAction = {
@@ -801,7 +934,7 @@
     };
 
     if (countsAgainstQuota) {
-      dailyMeta.introduced += 1;
+      dailyMeta.introduced[countsAgainstQuota] = introducedToday(countsAgainstQuota) + 1;
       saveDaily();
     }
 
@@ -837,11 +970,12 @@
       saveCardProgress(action.cardKey);
     } else {
       delete progress[action.cardKey];
-      Storage.removeItem('p_' + action.cardKey);
+      saveCardProgress(action.cardKey);
     }
 
     if (action.countsAgainstQuota) {
-      dailyMeta.introduced = Math.max(0, dailyMeta.introduced - 1);
+      const b = action.countsAgainstQuota;
+      dailyMeta.introduced[b] = Math.max(0, introducedToday(b) - 1);
       saveDaily();
     }
     streak = action.prevStreak;
@@ -882,8 +1016,11 @@
 
   // ---------- Render: Stats ----------
   function renderStats(){
+    const book = activeBook();
+    const words = bookWords(book.id);
+    document.getElementById('stats-book').textContent = `${book.name} · ${book.sub}`;
     let nNew=0, nLearning=0, nReview=0, nMastered=0;
-    WORDS.forEach(w => {
+    words.forEach(w => {
       const s = cardState(cardKey(w.id,'fwd'));
       if (s==='new') nNew++;
       else if (s==='learning') nLearning++;
@@ -896,7 +1033,7 @@
     document.getElementById('s-mastered').textContent = nMastered;
 
     let rLocked=0, rNew=0, rLearning=0, rReview=0, rMastered=0;
-    WORDS.forEach(w => {
+    words.forEach(w => {
       if (!reverseUnlocked(w)) { rLocked++; return; }
       const s = cardState(cardKey(w.id,'rev'));
       if (s==='new') rNew++;
@@ -910,10 +1047,17 @@
     document.getElementById('s-rev-review').textContent = rReview;
     document.getElementById('s-rev-mastered').textContent = rMastered;
 
-    const v1Learned = WORDS.filter(w=>w.vol===1 && progress[cardKey(w.id,'fwd')]).length;
-    const v2Learned = WORDS.filter(w=>w.vol===2 && progress[cardKey(w.id,'fwd')]).length;
-    document.getElementById('s-vol1').textContent = `${v1Learned} / ${TOTAL_VOL1}`;
-    document.getElementById('s-vol2').textContent = `${v2Learned} / ${TOTAL_VOL2}`;
+    // words started per volume of this book
+    const volsEl = document.getElementById('s-vols');
+    volsEl.innerHTML = '';
+    Object.entries(book.vols).forEach(([vol, label]) => {
+      const inVol = words.filter(w => w.vol === Number(vol));
+      const started = inVol.filter(w => progress[cardKey(w.id,'fwd')]).length;
+      const row = document.createElement('div');
+      row.className = 'stats-row';
+      row.innerHTML = `<span>${escapeHtml(label)}</span><span>${started} / ${inVol.length}</span>`;
+      volsEl.appendChild(row);
+    });
 
     document.getElementById('daily-limit').value = String(settings.dailyLimit);
     document.getElementById('toggle-reverse').checked = settings.reverseEnabled;
@@ -928,7 +1072,7 @@
 
   document.getElementById('btn-sections').addEventListener('click', () => { renderChaptersScreen(); showScreen('chapters'); });
   document.getElementById('btn-all-chapters').addEventListener('click', () => {
-    settings.selection = [];
+    settings.selections[activeBook().id] = [];
     saveSettings();
     renderChaptersScreen();
     renderHome();
@@ -964,13 +1108,13 @@
   });
 
   document.getElementById('btn-reset').addEventListener('click', async () => {
-    const ok = window.confirm('Весь прогресс изучения будет удалён без возможности восстановления. Продолжить?');
+    const ok = window.confirm('Весь прогресс изучения по всем книгам будет удалён без возможности восстановления. Продолжить?');
     if (!ok) return;
     await Storage.clearAll();
     progress = {};
-    dailyMeta = { date: todayStr(), introduced: 0 };
+    dailyMeta = { date: todayStr(), introduced: {} };
     streak = { lastDate:null, count:0 };
-    settings = { dailyLimit:15, selection:[], reverseEnabled:true };
+    settings = defaultSettings();
     renderStats();
     renderHome();
   });
