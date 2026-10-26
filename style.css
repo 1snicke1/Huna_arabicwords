@@ -532,3 +532,55 @@ body::before{
   .hero-number{ font-size:64px; }
   .card-word.is-arabic{ font-size:36px; }
 }
+
+/* ---------- Numbers trainer ---------- */
+.numbers-entry{ gap:12px; margin-top:-12px; }
+.numbers-entry .section-select-text{ flex:1; }
+.numbers-entry-icon{
+  font-family:var(--font-ar); font-size:17px; font-weight:700;
+  color:var(--orange);
+  flex-shrink:0;
+}
+.numbers-head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.numbers-score{ font-size:13px; font-weight:700; color:var(--teal-bright); white-space:nowrap; }
+.num-modes{
+  display:grid; grid-template-columns:1fr 1fr; gap:6px;
+  padding:4px; border-radius:14px;
+  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09);
+  margin-bottom:10px;
+}
+.num-mode{
+  padding:9px 6px; border:none; border-radius:10px;
+  background:transparent; color:rgba(255,255,255,.6);
+  font-family:var(--font-ui); font-size:12.5px; font-weight:700; cursor:pointer;
+}
+.num-mode.active{ background:linear-gradient(135deg, var(--teal-dark), var(--teal)); color:#fff; }
+.num-ranges{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; }
+.num-range{
+  padding:7px 12px; border-radius:99px;
+  border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.04);
+  color:rgba(255,255,255,.75);
+  font-family:var(--font-ui); font-size:12.5px; font-weight:700; cursor:pointer;
+}
+.num-range.active{ border-color:var(--orange); color:#fff; background:rgba(255,125,31,.18); }
+.num-card{ min-height:min(46vh, 360px); }
+.num-front-main{ font-size:72px; font-weight:800; line-height:1.1; color:#fff; }
+.num-front-main.is-arabic{ font-family:var(--font-ar); font-size:34px; font-weight:600; line-height:1.7; }
+.num-front-sub{ font-family:var(--font-ar); font-size:30px; color:rgba(255,255,255,.55); margin-top:6px; }
+.num-front-sub:empty{ display:none; }
+.num-back-prompt{ font-size:20px; font-weight:700; color:rgba(255,255,255,.8); }
+.num-back-prompt.is-arabic{ font-family:var(--font-ar); font-size:24px; font-weight:600; line-height:1.7; }
+.num-back-answer{ font-size:34px; font-weight:800; color:#fff; }
+.num-back-answer.is-arabic{ font-family:var(--font-ar); font-size:32px; font-weight:600; line-height:1.7; color:var(--teal-bright); }
+.num-parts{ display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin-top:16px; direction:rtl; }
+.num-parts:empty{ display:none; }
+.num-part{
+  display:flex; flex-direction:column; align-items:center;
+  padding:6px 10px; border-radius:10px;
+  background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1);
+}
+.num-part b{ font-size:12px; color:var(--orange); }
+.num-part .is-arabic{ font-family:var(--font-ar); font-size:17px; line-height:1.6; }
+.num-rule{ margin-top:14px; font-size:12.5px; line-height:1.5; color:rgba(255,255,255,.55); }
+.num-rule:empty{ display:none; }
+.num-grade-row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:20px; }

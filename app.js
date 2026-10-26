@@ -203,7 +203,7 @@
   //   step, r(eps after graduating), i(nterval days), ef, due(ms), dueDay (review cards),
   //   lapses, leech }
   let progress = {};
-  const defaultSettings = () => ({ dailyLimit: 15, selections: {}, reverseEnabled: true, activeBook: 'huna' });
+  const defaultSettings = () => ({ dailyLimit: 15, selections: {}, reverseEnabled: true, activeBook: 'huna', numbers: { mode:'say', range:'all' } });
   let settings = defaultSettings(); // selections: { [bookId]: [{vol,ch,dlg|null}] }
   let dailyMeta = { date: todayStr(), introduced: {} }; // introduced: { [bookId]: n }
   let streak = { lastDate: null, count: 0 };
@@ -656,8 +656,9 @@
     done: document.getElementById('screen-done'),
     stats: document.getElementById('screen-stats'),
     chapters: document.getElementById('screen-chapters'),
+    numbers: document.getElementById('screen-numbers'),
   };
-  const BACK_ENABLED_SCREENS = ['study','stats','chapters'];
+  const BACK_ENABLED_SCREENS = ['study','stats','chapters','numbers'];
 
   let currentScreenName = 'home';
   function showScreen(name){
@@ -1062,6 +1063,175 @@
     document.getElementById('daily-limit').value = String(settings.dailyLimit);
     document.getElementById('toggle-reverse').checked = settings.reverseEnabled;
   }
+
+  // ---------- Numbers trainer ----------
+  // Cardinal numbers 1–1000 as said when counting aloud (no counted noun),
+  // fully vowelled. Spelling follows the textbooks: units and tens as in
+  // Huna Arabic, مِئَة for 100 as in Al-Arabiya Bayna Yadayk (مِائَة is shown
+  // as the alternative spelling).
+  const NUM_UNITS = ['', 'وَاحِدٌ', 'اِثْنَانِ', 'ثَلَاثَةٌ', 'أَرْبَعَةٌ', 'خَمْسَةٌ', 'سِتَّةٌ', 'سَبْعَةٌ', 'ثَمَانِيَةٌ', 'تِسْعَةٌ'];
+  const NUM_TEEN_UNITS = ['', 'أَحَدَ', 'اِثْنَا', 'ثَلَاثَةَ', 'أَرْبَعَةَ', 'خَمْسَةَ', 'سِتَّةَ', 'سَبْعَةَ', 'ثَمَانِيَةَ', 'تِسْعَةَ'];
+  const NUM_TENS = ['', 'عَشَرَةٌ', 'عِشْرُونَ', 'ثَلَاثُونَ', 'أَرْبَعُونَ', 'خَمْسُونَ', 'سِتُّونَ', 'سَبْعُونَ', 'ثَمَانُونَ', 'تِسْعُونَ'];
+  const NUM_HUNDREDS = ['', 'مِئَةٌ', 'مِئَتَانِ', 'ثَلَاثُمِئَةٍ', 'أَرْبَعُمِئَةٍ', 'خَمْسُمِئَةٍ', 'سِتُّمِئَةٍ', 'سَبْعُمِئَةٍ', 'ثَمَانِمِئَةٍ', 'تِسْعُمِئَةٍ'];
+  const NUM_RU_UNITS = ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
+  const NUM_RU_TENS = ['', 'десять', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+  const NUM_RANGES = [
+    { id:'1-10', label:'1–10', min:1, max:10 },
+    { id:'11-20', label:'11–20', min:11, max:20 },
+    { id:'21-99', label:'21–99', min:21, max:99 },
+    { id:'100-1000', label:'100–1000', min:100, max:1000 },
+    { id:'all', label:'Все 1–1000', min:1, max:1000 },
+  ];
+
+  // [{v, t}] in the order they are said: hundreds, units, tens
+  function arabicNumberParts(n){
+    if (n === 1000) return [{ v:1000, t:'أَلْفٌ' }];
+    const parts = [];
+    const h = Math.floor(n / 100), r = n % 100;
+    if (h) parts.push({ v:h * 100, t:NUM_HUNDREDS[h] });
+    if (r > 0 && r < 10) parts.push({ v:r, t:NUM_UNITS[r] });
+    else if (r === 10) parts.push({ v:10, t:NUM_TENS[1] });
+    else if (r > 10 && r < 20) parts.push({ v:r, t:NUM_TEEN_UNITS[r - 10] + ' عَشَرَ' });
+    else if (r >= 20) {
+      const u = r % 10, d = Math.floor(r / 10);
+      if (u) parts.push({ v:u, t:NUM_UNITS[u] });
+      parts.push({ v:d * 10, t:NUM_TENS[d] });
+    }
+    return parts;
+  }
+  // parts are joined with وَ, written together with the next word;
+  // after وَ the hamzat al-wasl of اِثْنَانِ loses its kasra
+  function arabicNumber(n){
+    return arabicNumberParts(n).map((p, i) => i ? 'وَ' + p.t.replace(/^اِ/, 'ا') : p.t).join(' ');
+  }
+  const easternDigits = (n) => String(n).replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
+
+  function numberRule(n){
+    const r = n % 100;
+    const rules = [];
+    if (n === 1000) rules.push('1000 — أَلْف, мн. ч. آلَاف');
+    if (n >= 100 && n < 1000) {
+      rules.push(n < 300
+        ? '100 — مِئَة, 200 — двойственное число مِئَتَانِ'
+        : 'Сотни 300–900: число + مِئَةٍ, пишутся слитно');
+      rules.push('Пишется также مِائَة (алиф не читается)');
+    }
+    if (r > 10 && r < 20) rules.push('11–19: обе части на «-а» и не изменяются; 11 — أَحَدَ, 12 — اِثْنَا');
+    if (r > 20 && r % 10) rules.push(`Сначала единицы, потом десятки: «${NUM_RU_UNITS[r % 10]} и ${NUM_RU_TENS[Math.floor(r / 10)]}»`);
+    if (r >= 3 && r <= 10) rules.push('3–10 при счёте — с ة на конце');
+    if (rules.length === 0 && r % 10 === 0 && r >= 20) rules.push('Десятки 20–90 оканчиваются на ـُونَ');
+    return rules;
+  }
+
+  const numState = { current:null, flipped:false, recent:[], retry:[], seen:0, known:0 };
+  const numSettings = () => Object.assign({ mode:'say', range:'all' }, settings.numbers || {});
+  const numRange = () => NUM_RANGES.find(r => r.id === numSettings().range) || NUM_RANGES[NUM_RANGES.length - 1];
+
+  function nextNumber(){
+    const { min, max } = numRange();
+    // a missed number comes back after a few others
+    numState.retry.forEach(x => x.wait--);
+    const due = numState.retry.findIndex(x => x.wait <= 0 && x.n >= min && x.n <= max);
+    if (due >= 0) return numState.retry.splice(due, 1)[0].n;
+    const size = max - min + 1;
+    const avoid = Math.min(numState.recent.length, size - 1, 8);
+    let n;
+    do { n = min + Math.floor(Math.random() * size); }
+    while (numState.recent.slice(-avoid).includes(n));
+    return n;
+  }
+
+  function renderNumbersControls(){
+    const s = numSettings();
+    document.querySelectorAll('.num-mode').forEach(b => b.classList.toggle('active', b.dataset.mode === s.mode));
+    const wrap = document.getElementById('num-ranges');
+    wrap.innerHTML = '';
+    NUM_RANGES.forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'num-range' + (r.id === s.range ? ' active' : '');
+      b.textContent = r.label;
+      b.addEventListener('click', () => {
+        settings.numbers = Object.assign(numSettings(), { range:r.id });
+        saveSettings();
+        renderNumbersControls();
+        showNumber(nextNumber());
+      });
+      wrap.appendChild(b);
+    });
+    document.getElementById('num-score').textContent =
+      numState.seen ? `верно ${numState.known} из ${numState.seen}` : '';
+  }
+
+  function showNumber(n){
+    numState.current = n;
+    numState.flipped = false;
+    numState.recent = numState.recent.concat(n).slice(-20);
+    const say = numSettings().mode === 'say';
+    const words = arabicNumber(n);
+    const front = document.getElementById('num-front-main');
+    front.textContent = say ? String(n) : words;
+    front.classList.toggle('is-arabic', !say);
+    document.getElementById('num-front-sub').textContent = say ? easternDigits(n) : '';
+    document.getElementById('num-hint').textContent = say
+      ? 'Назовите число по-арабски вслух, затем нажмите'
+      : 'Какое это число? Нажмите, чтобы проверить';
+    document.getElementById('num-front').classList.remove('hidden');
+    document.getElementById('num-back').classList.add('hidden');
+    document.getElementById('num-grade-row').classList.add('hidden');
+  }
+
+  function flipNumber(){
+    if (numState.flipped || numState.current == null) return;
+    numState.flipped = true;
+    const n = numState.current;
+    const say = numSettings().mode === 'say';
+    const prompt = document.getElementById('num-back-prompt');
+    const answer = document.getElementById('num-back-answer');
+    prompt.textContent = say ? `${n} · ${easternDigits(n)}` : arabicNumber(n);
+    prompt.classList.toggle('is-arabic', !say);
+    answer.textContent = say ? arabicNumber(n) : `${n} · ${easternDigits(n)}`;
+    answer.classList.toggle('is-arabic', say);
+    const parts = arabicNumberParts(n);
+    document.getElementById('num-parts').innerHTML = parts.length > 1
+      ? parts.map(p => `<span class="num-part"><b>${p.v}</b><span class="is-arabic">${escapeHtml(p.t)}</span></span>`).join('')
+      : '';
+    document.getElementById('num-rule').innerHTML = numberRule(n).map(r => `<div>${escapeHtml(r)}</div>`).join('');
+    document.getElementById('num-front').classList.add('hidden');
+    document.getElementById('num-back').classList.remove('hidden');
+    document.getElementById('num-grade-row').classList.remove('hidden');
+    haptic('light');
+  }
+
+  function gradeNumber(knew){
+    if (!numState.flipped) return;
+    numState.seen += 1;
+    if (knew) { numState.known += 1; haptic('success'); }
+    else {
+      haptic('warning');
+      numState.retry = numState.retry.filter(x => x.n !== numState.current);
+      numState.retry.push({ n:numState.current, wait:3 + Math.floor(Math.random() * 3) });
+    }
+    renderNumbersControls();
+    showNumber(nextNumber());
+  }
+
+  function openNumbers(){
+    renderNumbersControls();
+    showNumber(nextNumber());
+    showScreen('numbers');
+  }
+
+  document.getElementById('btn-numbers').addEventListener('click', openNumbers);
+  document.getElementById('num-card').addEventListener('click', flipNumber);
+  document.getElementById('num-hit').addEventListener('click', (e) => { e.stopPropagation(); gradeNumber(true); });
+  document.getElementById('num-miss').addEventListener('click', (e) => { e.stopPropagation(); gradeNumber(false); });
+  document.querySelectorAll('.num-mode').forEach(b => b.addEventListener('click', () => {
+    if (numSettings().mode === b.dataset.mode) return;
+    settings.numbers = Object.assign(numSettings(), { mode:b.dataset.mode });
+    saveSettings();
+    renderNumbersControls();
+    showNumber(numState.current || nextNumber());
+  }));
 
   // ---------- Event wiring ----------
   document.getElementById('btn-start').addEventListener('click', startSession);
