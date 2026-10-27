@@ -53,28 +53,42 @@
         }
       });
     },
+    // Cloud writes are async and may complete out of order, so writes to one
+    // key are queued: while one is in flight, later values only replace the
+    // pending one, and the newest value is always the one written last.
+    // value === null means "remove the key".
+    _queue: {},
+    _write(key, value){
+      if (!this.useCloud) return Promise.resolve(true);
+      let q = this._queue[key];
+      if (q) { q.value = value; q.dirty = true; return q.done; }
+      q = this._queue[key] = { value, dirty: true };
+      q.done = (async () => {
+        let ok = true;
+        while (q.dirty) {
+          q.dirty = false;
+          const v = q.value;
+          ok = await new Promise((resolve) => {
+            const cb = (err) => {
+              if (err) console.warn('CloudStorage write failed, kept local copy:', key, err);
+              resolve(!err);
+            };
+            if (v === null) tg.CloudStorage.removeItem(key, cb);
+            else tg.CloudStorage.setItem(key, v, cb);
+          });
+        }
+        delete this._queue[key];
+        return ok;
+      })();
+      return q.done;
+    },
     setItem(key, value){
       try { localStorage.setItem(key, value); } catch(e){}
-      return new Promise((resolve) => {
-        if (this.useCloud) {
-          tg.CloudStorage.setItem(key, value, (err) => {
-            if (err) console.warn('CloudStorage.setItem failed, kept local copy:', key, err);
-            resolve(!err);
-          });
-        } else {
-          resolve(true);
-        }
-      });
+      return this._write(key, value);
     },
     removeItem(key){
       try { localStorage.removeItem(key); } catch(e){}
-      return new Promise((resolve) => {
-        if (this.useCloud) {
-          tg.CloudStorage.removeItem(key, () => resolve(true));
-        } else {
-          resolve(true);
-        }
-      });
+      return this._write(key, null);
     },
     getKeys(){
       return new Promise((resolve) => {
@@ -205,7 +219,7 @@
   let progress = {};
   const defaultSettings = () => ({ dailyLimit: 15, selections: {}, reverseEnabled: true, activeBook: 'huna', numbers: { mode:'say', range:'all' } });
   let settings = defaultSettings(); // selections: { [bookId]: [{vol,ch,dlg|null}] }
-  let dailyMeta = { date: todayStr(), introduced: {} }; // introduced: { [bookId]: n }
+  let dailyMeta = { date: todayStr(), introduced: {}, done: {} }; // per book: new words introduced, cards answered
   let streak = { lastDate: null, count: 0 };
 
   let session = null; // see startSessionQueues()
@@ -294,7 +308,8 @@
   }
   // the app may stay open across the 4:00 day boundary
   function rollDailyMeta(){
-    if (dailyMeta.date !== todayStr()) dailyMeta = { date: todayStr(), introduced: {} };
+    if (dailyMeta.date !== todayStr()) dailyMeta = { date: todayStr(), introduced: {}, done: {} };
+    if (typeof dailyMeta.done !== 'object' || dailyMeta.done === null) dailyMeta.done = {};
   }
 
   function saveCardProgress(key){ return saveBucket(bucketOf(key)); }
@@ -679,33 +694,70 @@
   function goHome(){ renderHome(); showScreen('home'); }
 
   // ---------- Render: Home ----------
+  // a streak that wasn't continued yesterday or today is already broken
+  function currentStreak(){
+    if (streak.lastDate === todayStr() || streak.lastDate === dayKey(today() - 1)) return streak.count || 0;
+    return 0;
+  }
+  // rough Anki-style estimate: ~8 s per answer, a new word is seen about 3 times
+  function estimateMinutes(nNew, nLearn, nReview){
+    return Math.max(1, Math.round((nNew * 3 + nLearn * 1.5 + nReview) * 8 / 60));
+  }
+  const RING_LEN = 2 * Math.PI * 44;
+
   function renderHome(){
     rollDailyMeta();
-    const due = dueReviewKeys().length + learningDueSoon().length;
+    const book = activeBook();
+    const nReview = dueReviewKeys().length;
+    const nLearn = learningDueSoon().length;
+    const nNew = newKeysForToday().length;
     const freshForwardCount = newForwardWords().length;
-    const freshAvailable = newKeysForToday().length;
-    const sessionSize = due + freshAvailable;
+    const sessionSize = nReview + nLearn + nNew;
+    const done = dailyMeta.done[book.id] || 0;
 
     document.getElementById('due-count').textContent = sessionSize;
-    const learnedCount = pool(WORDS).filter(w => progress[cardKey(w.id,'fwd')]).length;
-    document.getElementById('stat-learned').textContent = learnedCount;
-    document.getElementById('stat-total').textContent = pool(WORDS).length;
-    document.getElementById('stat-streak').textContent = streak.count || 0;
+    document.getElementById('due-count-label').textContent = sessionSize ? pluralRu(sessionSize, 'карточка', 'карточки', 'карточек') : 'всё готово';
+    document.getElementById('q-new').textContent = nNew;
+    document.getElementById('q-learn').textContent = nLearn;
+    document.getElementById('q-review').textContent = nReview;
+    document.getElementById('today-done').textContent = done ? `Уже сделано сегодня: ${done}` : '';
+    document.getElementById('today-eta').textContent = sessionSize ? `≈ ${estimateMinutes(nNew, nLearn, nReview)} мин` : '';
+    const share = sessionSize + done ? done / (sessionSize + done) : 1;
+    document.getElementById('ring-fill').style.strokeDashoffset = String(RING_LEN * (1 - share));
+    document.getElementById('stat-streak').textContent = currentStreak();
+    document.getElementById('streak-pill').classList.toggle('is-zero', currentStreak() === 0);
 
-    let label;
+    // whole-book progress, by the state of each word's forward card
+    const words = bookWords(book.id);
+    let mastered = 0, review = 0, learning = 0;
+    words.forEach(w => {
+      const s = cardState(cardKey(w.id,'fwd'));
+      if (s === 'mastered') mastered++;
+      else if (s === 'review') review++;
+      else if (s === 'learning') learning++;
+    });
+    const pct = (n) => (words.length ? 100 * n / words.length : 0) + '%';
+    document.getElementById('stat-learned').textContent = mastered + review + learning;
+    document.getElementById('stat-total').textContent = words.length;
+    document.getElementById('bp-mastered').style.width = pct(mastered);
+    document.getElementById('bp-review').style.width = pct(review);
+    document.getElementById('bp-learning').style.width = pct(learning);
+    document.getElementById('lg-mastered').textContent = mastered;
+    document.getElementById('lg-review').textContent = review;
+    document.getElementById('lg-learning').textContent = learning;
+
+    let label = '';
     if (sessionSize === 0) {
       const later = learningKeys();
       if (later.length) {
         const mins = Math.max(1, Math.ceil((progress[earliest(later)].due - Date.now()) / 60000));
-        label = `ещё ${later.length} ${pluralWords(later.length)} на изучении — вернутся через ${mins} мин`;
+        label = `Ещё ${later.length} ${pluralWords(later.length)} на изучении — вернутся через ${mins} мин`;
       } else {
-        label = freshForwardCount > 0 ? 'дневной лимит новых слов исчерпан' : 'на сегодня всё повторено 🎉';
+        label = freshForwardCount > 0 ? 'Дневной лимит новых слов исчерпан' : 'На сегодня всё повторено';
       }
     }
-    else if (due === 0) label = 'новых слов готово к изучению';
-    else if (freshAvailable === 0) label = 'слов к повторению сегодня';
-    else label = 'слов к повторению и изучению';
     document.getElementById('hero-label').textContent = label;
+    document.getElementById('hero-label').classList.toggle('hidden', !label);
     document.getElementById('btn-start').classList.toggle('hidden', sessionSize === 0);
 
     document.getElementById('section-summary').textContent = selectionSummaryText();
@@ -893,10 +945,11 @@
   }
 
   function flipCard(){
+    if (!session || !session.current) return;
     if (!document.getElementById('card-back').classList.contains('hidden')) return;
     // show on each button when the word will come back, as Anki does
     const now = Date.now();
-    document.querySelectorAll('.grade-btn').forEach(btn => {
+    document.querySelectorAll('#grade-row .grade-btn').forEach(btn => {
       const next = scheduleCard(session.current.key, parseInt(btn.dataset.grade,10), now);
       btn.querySelector('.grade-ivl').textContent = formatInterval(next, now);
     });
@@ -915,6 +968,8 @@
   }
 
   async function onGrade(grade){
+    // a stray second tap can arrive after the last card was answered
+    if (!session || !session.current || document.getElementById('card-back').classList.contains('hidden')) return;
     const { key } = session.current;
     const { word:w, dir } = parseCardKey(key);
     const wasNew = !progress[key];
@@ -925,6 +980,7 @@
     // snapshot everything needed to fully undo this grade
     session.lastAction = {
       cardKey: key,
+      book: w.book,
       prevProgress: progress[key] ? JSON.parse(JSON.stringify(progress[key])) : null,
       countsAgainstQuota,
       prevStreak: Object.assign({}, streak),
@@ -934,10 +990,10 @@
       }),
     };
 
-    if (countsAgainstQuota) {
-      dailyMeta.introduced[countsAgainstQuota] = introducedToday(countsAgainstQuota) + 1;
-      saveDaily();
-    }
+    rollDailyMeta();
+    if (countsAgainstQuota) dailyMeta.introduced[countsAgainstQuota] = introducedToday(countsAgainstQuota) + 1;
+    dailyMeta.done[w.book] = (dailyMeta.done[w.book] || 0) + 1;
+    saveDaily();
 
     const before = progress[key];
     const result = gradeCard(key, grade);
@@ -977,8 +1033,9 @@
     if (action.countsAgainstQuota) {
       const b = action.countsAgainstQuota;
       dailyMeta.introduced[b] = Math.max(0, introducedToday(b) - 1);
-      saveDaily();
     }
+    dailyMeta.done[action.book] = Math.max(0, (dailyMeta.done[action.book] || 0) - 1);
+    saveDaily();
     streak = action.prevStreak;
     saveStreak();
 
@@ -1248,7 +1305,8 @@
     renderHome();
   });
 
-  document.querySelectorAll('.grade-btn').forEach(btn => {
+  // only the word-card buttons: the numbers trainer reuses the .grade-btn look
+  document.querySelectorAll('#grade-row .grade-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       onGrade(parseInt(btn.dataset.grade,10));
@@ -1282,7 +1340,7 @@
     if (!ok) return;
     await Storage.clearAll();
     progress = {};
-    dailyMeta = { date: todayStr(), introduced: {} };
+    dailyMeta = { date: todayStr(), introduced: {}, done: {} };
     streak = { lastDate:null, count:0 };
     settings = defaultSettings();
     renderStats();
