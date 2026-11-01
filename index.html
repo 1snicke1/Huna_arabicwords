@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Noto+Naskh+Arabic:wght@500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 
@@ -49,31 +49,26 @@
             <div class="today-num-label" id="due-count-label">карточек</div>
           </div>
         </div>
-        <div class="today-queues">
-          <div class="today-q"><i class="dot-new"></i><span>Новые</span><b id="q-new">0</b></div>
-          <div class="today-q"><i class="dot-learn"></i><span>Изучаются</span><b id="q-learn">0</b></div>
-          <div class="today-q"><i class="dot-review"></i><span>Повторить</span><b id="q-review">0</b></div>
-          <div class="today-done" id="today-done"></div>
+        <div class="today-streak">
+          <div class="today-streak-title">Ударный режим</div>
+          <div class="week-strip" id="week-strip"></div>
+          <div class="today-streak-msg" id="streak-msg"></div>
         </div>
       </div>
       <div class="hero-label" id="hero-label"></div>
+      <div class="dir-label" id="dir-label">Направление</div>
+      <div class="dir-seg" role="radiogroup" aria-labelledby="dir-label">
+        <button class="dir-btn" data-dir="fwd" role="radio">Ар → Рус</button>
+        <button class="dir-btn" data-dir="rev" role="radio">Рус → Ар</button>
+        <button class="dir-btn" data-dir="both" role="radio">Оба</button>
+      </div>
       <button class="cta-button" id="btn-start">
-        <span>Начать занятие</span>
+        <span id="btn-start-label">Начать занятие</span>
         <svg viewBox="0 0 24 24" width="20" height="20"><path d="M8 5l8 7-8 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <button class="today-section" id="btn-sections">
         <span>Раздел:</span> <b id="section-summary">Все главы</b> <em>Изменить</em>
       </button>
-    </div>
-
-    <div class="book-progress">
-      <div class="book-progress-head"><span>Прогресс по книге</span><span><b id="stat-learned">0</b> из <span id="stat-total">0</span></span></div>
-      <div class="book-progress-bar"><i class="bp-mastered" id="bp-mastered"></i><i class="bp-review" id="bp-review"></i><i class="bp-learning" id="bp-learning"></i></div>
-      <div class="book-progress-legend">
-        <span class="lg-mastered">освоено <b id="lg-mastered">0</b></span>
-        <span class="lg-review">повторяются <b id="lg-review">0</b></span>
-        <span class="lg-learning">изучаются <b id="lg-learning">0</b></span>
-      </div>
     </div>
 
     <div class="tool-grid">
@@ -220,49 +215,43 @@
     <div class="stats-title">Статистика</div>
     <div class="stats-book" id="stats-book"></div>
 
-    <div class="stats-subtitle">Арабский → Русский</div>
-    <div class="stats-block">
-      <div class="stats-row"><span>Новые</span><span id="s-new">0</span></div>
-      <div class="stats-row"><span>Изучаются</span><span id="s-learning">0</span></div>
-      <div class="stats-row"><span>Повторяются</span><span id="s-review">0</span></div>
-      <div class="stats-row"><span>Освоено</span><span id="s-mastered">0</span></div>
+    <div class="stats-chips">
+      <div class="stats-chip"><b id="s-today-new">0</b><span>новых сегодня</span></div>
+      <div class="stats-chip"><b id="s-tomorrow">0</b><span>к повторению завтра</span></div>
+      <div class="stats-chip"><b id="s-streak">0</b><span>дней подряд</span></div>
     </div>
 
-    <div class="stats-subtitle">Русский → Арабский</div>
-    <div class="stats-block">
-      <div class="stats-row"><span>Пока недоступно</span><span id="s-rev-locked">0</span></div>
-      <div class="stats-row"><span>Новые</span><span id="s-rev-new">0</span></div>
-      <div class="stats-row"><span>Изучаются</span><span id="s-rev-learning">0</span></div>
-      <div class="stats-row"><span>Повторяются</span><span id="s-rev-review">0</span></div>
-      <div class="stats-row"><span>Освоено</span><span id="s-rev-mastered">0</span></div>
-    </div>
+    <div class="stats-block" id="s-dirs"></div>
 
     <div class="stats-block" id="s-vols"></div>
 
-    <div class="settings-row">
-      <label for="toggle-reverse">Обратное направление (RU → AR)</label>
-      <input type="checkbox" id="toggle-reverse" checked>
+    <div class="stats-block">
+      <div class="stats-row settings-line">
+        <label for="daily-limit">Новых слов в день<small>на каждое направление</small></label>
+        <select id="daily-limit">
+          <option value="10">10</option>
+          <option value="15" selected>15</option>
+          <option value="20">20</option>
+          <option value="30">30</option>
+          <option value="9999">Без ограничений</option>
+        </select>
+      </div>
+      <button class="stats-row settings-line settings-link" id="btn-support">
+        <span>Написать в поддержку</span>
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
     </div>
 
-    <div class="settings-row">
-      <label for="daily-limit">Новых слов в день</label>
-      <select id="daily-limit">
-        <option value="10">10</option>
-        <option value="15" selected>15</option>
-        <option value="20">20</option>
-        <option value="30">30</option>
-        <option value="9999">Без ограничений</option>
-      </select>
+    <div class="stats-foot">
+      <button class="link-button danger" id="btn-reset">Сбросить весь прогресс</button>
+      <button class="credit-link" id="btn-credit">Made by <b>ItqanLab</b></button>
     </div>
-
-    <button class="link-button" id="btn-support">Написать в поддержку</button>
-    <button class="link-button danger" id="btn-reset">Сбросить весь прогресс</button>
   </section>
 
 </div>
 
 <script src="words-data.js?v=5"></script>
 <script src="words-bayna2.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
