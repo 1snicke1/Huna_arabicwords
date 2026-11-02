@@ -571,6 +571,35 @@ body::before{
 .num-rule:empty{ display:none; }
 .num-grade-row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:20px; }
 
+/* ---------- Islamic months trainer ---------- */
+.month-modes{ grid-template-columns:.8fr 1.1fr 1.1fr; margin-bottom:16px; }
+.month-mode{
+  padding:9px 2px; border:none; border-radius:10px;
+  background:transparent; color:rgba(255,255,255,.6);
+  font-family:var(--font-ui); font-size:12px; font-weight:700; cursor:pointer;
+}
+.month-mode.active{ background:linear-gradient(135deg, var(--teal-dark), var(--teal)); color:#fff; }
+.month-front-main{ font-size:30px; font-weight:800; line-height:1.3; color:#fff; }
+.month-front-main.is-arabic{ font-family:var(--font-ar); font-size:42px; font-weight:600; line-height:1.6; }
+.month-back-prompt{ font-size:20px; font-weight:700; color:rgba(255,255,255,.8); }
+.month-back-prompt.is-arabic{ font-family:var(--font-ar); font-size:30px; font-weight:600; line-height:1.6; }
+.month-back-answer{ font-size:26px; font-weight:800; color:#fff; }
+.month-back-answer.is-arabic{ font-family:var(--font-ar); font-size:36px; font-weight:600; line-height:1.6; color:var(--teal-bright); }
+.month-back-tr{ margin-top:10px; font-size:14px; color:rgba(255,255,255,.65); }
+.month-back-alt{ margin-top:8px; font-size:16px; line-height:1.6; color:rgba(255,255,255,.55); }
+.month-back-alt:empty{ display:none; }
+.month-row{ display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid rgba(255,255,255,.07); }
+.month-row:last-child{ border-bottom:none; }
+.month-num{
+  width:28px; height:28px; flex-shrink:0; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(53,169,191,.16); color:var(--teal-bright); font-size:13px; font-weight:800;
+}
+.month-row-text{ flex:1; min-width:0; }
+.month-row-text b{ display:block; font-size:13.5px; font-weight:700; }
+.month-row-text small{ display:block; margin-top:1px; font-size:11.5px; color:rgba(255,255,255,.55); }
+.month-row-ar{ flex-shrink:0; font-family:var(--font-ar); font-size:20px; font-weight:600; line-height:1.5; }
+
 /* ---------- Home: "Today" card ---------- */
 .today-card{
   position:relative;
@@ -606,7 +635,9 @@ body::before{
 .week-day.done i{ background:linear-gradient(135deg, #ff7d1f, #ffb27a); border-color:transparent; }
 .week-day.today{ color:#fff; }
 .week-day.today:not(.done) i{ border-color:#ffb27a; border-style:dashed; }
-.today-streak-msg{ margin-top:8px; font-size:12px; line-height:1.35; color:rgba(255,255,255,.72); }
+.today-streak-msg{ margin-top:8px; font-size:12.5px; font-weight:700; line-height:1.35; color:#fff; }
+.today-streak-sub{ margin-top:3px; font-size:11.5px; line-height:1.35; color:rgba(255,255,255,.6); }
+.today-streak-sub:empty{ display:none; }
 .hero-label{ margin-top:12px; font-size:13.5px; color:rgba(255,255,255,.65); text-align:center; line-height:1.4; }
 .dir-label{ margin:14px 0 6px 2px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:rgba(255,255,255,.55); }
 .dir-seg{
@@ -633,6 +664,7 @@ body::before{
 
 /* ---------- Home: tools ---------- */
 .tool-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; padding-bottom:6px; }
+#btn-stats{ grid-column:1 / -1; }
 .tool-tile{
   display:flex; flex-direction:column; align-items:flex-start; gap:2px;
   padding:13px 14px; border-radius:16px; text-align:left; cursor:pointer;

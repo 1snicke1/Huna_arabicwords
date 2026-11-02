@@ -148,8 +148,8 @@
   // Vol numbers are unique across books, so (vol, chapter, dialogue) still
   // identifies a section. Word ids are unique too (they are progress keys).
   const BOOKS = [
-    { id:'huna', name:'Huna Arabic', sub:'Тома I–II', short:'Huna Arabic',
-      words: WORDS_DATA, chapters: CHAPTERS_DATA, vols: { 1:'Том I', 2:'Том II' },
+    { id:'huna', name:'هنا العربية', sub:'Тома 1–2', short:'Huna Arabic',
+      words: WORDS_DATA, chapters: CHAPTERS_DATA, vols: { 1:'Том 1', 2:'Том 2' },
       chapterLabel: (ch, title) => `Глава ${ch}. ${title}`, chapterShort: (ch) => `Глава ${ch}`,
       lessonLabel: (n) => `Диалог ${n}`, allLabel: 'Все главы и диалоги', allShort: 'Все главы' },
     { id:'bayna2', name:'العربية بين يديك', sub:'Том 2', short:'Бэйна ядайк 2',
@@ -697,8 +697,9 @@
     stats: document.getElementById('screen-stats'),
     chapters: document.getElementById('screen-chapters'),
     numbers: document.getElementById('screen-numbers'),
+    months: document.getElementById('screen-months'),
   };
-  const BACK_ENABLED_SCREENS = ['study','stats','chapters','numbers'];
+  const BACK_ENABLED_SCREENS = ['study','stats','chapters','numbers','months'];
 
   let currentScreenName = 'home';
   function showScreen(name){
@@ -752,12 +753,13 @@
     }
     const n = currentStreak();
     const pluralDays = (d) => `${d} ${pluralRu(d, 'день', 'дня', 'дней')} подряд`;
-    let msg;
-    if (studied.includes(t)) msg = done ? `Сегодня сделано: ${done}. ${pluralDays(n)}!` : `${pluralDays(n)}!`;
+    let msg, sub = '';
+    if (studied.includes(t)) { msg = `${pluralDays(n)}!`; sub = done ? `Сделано сегодня: ${done}` : ''; }
     else if (!sessionSize) msg = 'Сегодня карточек нет, можно отдохнуть';
     else if (n) msg = `Позанимайтесь сегодня, и будет ${pluralDays(n + 1)}`;
     else msg = 'Начните сегодня новую серию';
     document.getElementById('streak-msg').textContent = msg;
+    document.getElementById('streak-sub').textContent = sub;
   }
 
   function renderHome(){
@@ -1328,6 +1330,114 @@
     saveSettings();
     renderNumbersControls();
     showNumber(numState.current || nextNumber());
+  }));
+
+  // ---------- Islamic months trainer ----------
+  // Months are learned by their place in the year, never as equivalents of
+  // January, February…: the lunar calendar doesn't line up with those.
+  const MONTHS = [
+    { ar:'مُحَرَّم', tr:'Мухаррам', ord:'Первый месяц' },
+    { ar:'صَفَر', tr:'Сафар', ord:'Второй месяц' },
+    { ar:'رَبِيع الأَوَّل', tr:'Раби аль-авваль', ord:'Третий месяц' },
+    { ar:'رَبِيع الآخِر', tr:'Раби аль-ахир', ord:'Четвёртый месяц', alt:'Также: رَبِيع الثَّانِي' },
+    { ar:'جُمَادَى الأُولَى', tr:'Джумада аль-уля', ord:'Пятый месяц' },
+    { ar:'جُمَادَى الآخِرَة', tr:'Джумада аль-ахира', ord:'Шестой месяц', alt:'Также: جُمَادَى الثَّانِيَة' },
+    { ar:'رَجَب', tr:'Раджаб', ord:'Седьмой месяц' },
+    { ar:'شَعْبَان', tr:'Шаабан', ord:'Восьмой месяц' },
+    { ar:'رَمَضَان', tr:'Рамадан', ord:'Девятый месяц' },
+    { ar:'شَوَّال', tr:'Шавваль', ord:'Десятый месяц' },
+    { ar:'ذُو القَعْدَة', tr:'Зуль-када', ord:'Одиннадцатый месяц' },
+    { ar:'ذُو الحِجَّة', tr:'Зуль-хиджа', ord:'Двенадцатый месяц' },
+  ];
+  const monthState = { current:null, flipped:false, bag:[], retry:[], seen:0, known:0 };
+  const monthMode = () => settings.monthsMode || 'list';
+
+  function nextMonth(){
+    // a missed month comes back after a few others
+    monthState.retry.forEach(x => x.wait--);
+    const due = monthState.retry.findIndex(x => x.wait <= 0);
+    if (due >= 0) return monthState.retry.splice(due, 1)[0].i;
+    // every month once per round, in a new order each time
+    if (!monthState.bag.length) {
+      monthState.bag = shuffle(MONTHS.map((_, i) => i));
+      if (monthState.bag[0] === monthState.current) monthState.bag.push(monthState.bag.shift());
+    }
+    return monthState.bag.shift();
+  }
+
+  function showMonth(i){
+    monthState.current = i;
+    monthState.flipped = false;
+    const m = MONTHS[i], byName = monthMode() === 'name';
+    const front = document.getElementById('month-front-main');
+    front.textContent = byName ? m.ar : m.ord;
+    front.classList.toggle('is-arabic', byName);
+    document.getElementById('month-hint').textContent = byName ? 'Какой это месяц по счёту? Нажмите, чтобы проверить' : 'Как называется этот месяц? Нажмите, чтобы проверить';
+    document.getElementById('month-front').classList.remove('hidden');
+    document.getElementById('month-back').classList.add('hidden');
+    document.getElementById('month-grade-row').classList.add('hidden');
+  }
+
+  function flipMonth(){
+    if (monthState.flipped || monthState.current == null) return;
+    monthState.flipped = true;
+    const m = MONTHS[monthState.current], byName = monthMode() === 'name';
+    const prompt = document.getElementById('month-back-prompt');
+    const answer = document.getElementById('month-back-answer');
+    prompt.textContent = byName ? m.ar : m.ord;
+    prompt.classList.toggle('is-arabic', byName);
+    answer.textContent = byName ? m.ord : m.ar;
+    answer.classList.toggle('is-arabic', !byName);
+    document.getElementById('month-back-tr').textContent = m.tr;
+    document.getElementById('month-back-alt').textContent = m.alt || '';
+    document.getElementById('month-front').classList.add('hidden');
+    document.getElementById('month-back').classList.remove('hidden');
+    document.getElementById('month-grade-row').classList.remove('hidden');
+    haptic('light');
+  }
+
+  function gradeMonth(knew){
+    if (!monthState.flipped) return;
+    monthState.seen += 1;
+    if (knew) { monthState.known += 1; haptic('success'); }
+    else {
+      haptic('warning');
+      monthState.retry.push({ i:monthState.current, wait:3 + Math.floor(Math.random() * 3) });
+    }
+    renderMonthsScore();
+    showMonth(nextMonth());
+  }
+
+  function renderMonthsScore(){
+    document.getElementById('month-score').textContent =
+      monthMode() !== 'list' && monthState.seen ? `верно ${monthState.known} из ${monthState.seen}` : '';
+  }
+
+  function renderMonths(){
+    const mode = monthMode();
+    document.querySelectorAll('.month-mode').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    document.getElementById('month-list').classList.toggle('hidden', mode !== 'list');
+    document.getElementById('month-card-area').classList.toggle('hidden', mode === 'list');
+    document.getElementById('month-grade-row').classList.add('hidden');
+    renderMonthsScore();
+    if (mode !== 'list') showMonth(monthState.current == null ? nextMonth() : monthState.current);
+  }
+
+  document.getElementById('month-list').innerHTML = MONTHS.map((m, i) =>
+    `<div class="month-row"><span class="month-num">${i + 1}</span>` +
+    `<span class="month-row-text"><b>${m.ord}</b><small>${m.tr}</small></span>` +
+    `<span class="month-row-ar is-arabic">${m.ar}</span></div>`).join('');
+
+  document.getElementById('btn-months').addEventListener('click', () => { renderMonths(); showScreen('months'); });
+  document.getElementById('month-card').addEventListener('click', flipMonth);
+  document.getElementById('month-hit').addEventListener('click', (e) => { e.stopPropagation(); gradeMonth(true); });
+  document.getElementById('month-miss').addEventListener('click', (e) => { e.stopPropagation(); gradeMonth(false); });
+  document.querySelectorAll('.month-mode').forEach(b => b.addEventListener('click', () => {
+    if (monthMode() === b.dataset.mode) return;
+    settings.monthsMode = b.dataset.mode;
+    saveSettings();
+    haptic('light');
+    renderMonths();
   }));
 
   // ---------- Event wiring ----------
